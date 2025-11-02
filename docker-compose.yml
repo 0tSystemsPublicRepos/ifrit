@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  ifrit:
+    build: .
+    ports:
+      - "8080:8080"
+      - "8443:8443"
+    volumes:
+      - ./config:/app/config
+      - ./data:/app/data
+    environment:
+      - CLAUDE_API_KEY=${CLAUDE_API_KEY}
+      - LOG_LEVEL=info
+    networks:
+      - ifrit-network
+
+  backend:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    networks:
+      - ifrit-network
+    depends_on:
+      - ifrit
+
+networks:
+  ifrit-network:
+    driver: bridge

@@ -1,0 +1,45 @@
+# Go
+*.o
+*.a
+*.so
+.DS_Store
+bin/
+dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.env.local
+
+# Database
+*.db
+*.db-wal
+*.db-shm
+
+# Logs
+logs/
+*.log
+
+# Dependencies
+vendor/
+go.sum
+
+# Build
+/ifrit
+/ifrit.exe
+
+# Config (don't commit secrets)
+config/secrets.yaml
+config/*.key
+
+# MacOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Temp
+tmp/
+temp/
