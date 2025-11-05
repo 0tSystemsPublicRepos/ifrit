@@ -2,32 +2,37 @@ package llm
 
 import (
 	"fmt"
+	"time"
 )
 
 type Manager struct {
 	primary   Provider
 	fallback  Provider
 	primaryName string
+	cache     *AnalysisCache
 }
 
 func NewManager(primaryProvider, primaryKey, primaryModel, fallbackProvider, fallbackKey, fallbackModel string) *Manager {
 	var primary Provider
 	var fallback Provider
 
+	// Initialize cache (shared for all providers)
+	cache := NewAnalysisCache(24 * time.Hour)
+
 	// Initialize primary provider
 	switch primaryProvider {
 	case "claude":
-		primary = NewClaudeProvider(primaryKey, primaryModel)
+		primary = NewClaudeProviderWithCache(primaryKey, primaryModel, cache)
 	case "gpt":
 		primary = NewGPTProvider(primaryKey, primaryModel)
 	default:
-		primary = NewClaudeProvider(primaryKey, "claude-3-5-sonnet")
+		primary = NewClaudeProviderWithCache(primaryKey, "claude-3-5-sonnet", cache)
 	}
 
 	// Initialize fallback provider
 	switch fallbackProvider {
 	case "claude":
-		fallback = NewClaudeProvider(fallbackKey, fallbackModel)
+		fallback = NewClaudeProviderWithCache(fallbackKey, fallbackModel, cache)
 	case "gpt":
 		fallback = NewGPTProvider(fallbackKey, fallbackModel)
 	default:
@@ -35,9 +40,10 @@ func NewManager(primaryProvider, primaryKey, primaryModel, fallbackProvider, fal
 	}
 
 	return &Manager{
-		primary:   primary,
-		fallback:  fallback,
+		primary:     primary,
+		fallback:    fallback,
 		primaryName: primaryProvider,
+		cache:       cache,
 	}
 }
 
@@ -71,4 +77,14 @@ func (m *Manager) GeneratePayload(attackType string) (map[string]interface{}, er
 
 func (m *Manager) GetPrimaryName() string {
 	return m.primaryName
+}
+
+// GetCacheStats returns cache statistics for monitoring
+func (m *Manager) GetCacheStats() map[string]interface{} {
+	return m.cache.Stats()
+}
+
+// ClearCache clears all cached entries
+func (m *Manager) ClearCache() {
+	m.cache.Clear()
 }

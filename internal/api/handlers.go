@@ -6,19 +6,22 @@ import (
 	"strconv"
 
 	"github.com/0tSystemsPublicRepos/ifrit/internal/database"
+	"github.com/0tSystemsPublicRepos/ifrit/internal/llm"
 )
 
 type APIServer struct {
 	listenAddr string
 	apiKey     string
 	db         *database.SQLiteDB
+	llmManager *llm.Manager
 }
 
-func NewAPIServer(listenAddr, apiKey string, db *database.SQLiteDB) *APIServer {
+func NewAPIServer(listenAddr, apiKey string, db *database.SQLiteDB, llmManager *llm.Manager) *APIServer {
 	return &APIServer{
 		listenAddr: listenAddr,
 		apiKey:     apiKey,
 		db:         db,
+		llmManager: llmManager,
 	}
 }
 
@@ -29,6 +32,8 @@ func (s *APIServer) Start() error {
 	mux.HandleFunc("/api/attackers", s.corsMiddleware(s.handleGetAttackers))
 	mux.HandleFunc("/api/patterns", s.corsMiddleware(s.handleGetPatterns))
 	mux.HandleFunc("/api/stats", s.corsMiddleware(s.handleGetStats))
+	mux.HandleFunc("/api/cache/stats", s.corsMiddleware(s.handleGetCacheStats))
+	mux.HandleFunc("/api/cache/clear", s.corsMiddleware(s.handleClearCache))
 	mux.HandleFunc("/api/health", s.corsMiddleware(s.handleHealth))
 
 	return http.ListenAndServe(s.listenAddr, mux)
@@ -114,6 +119,47 @@ func (s *APIServer) handleGetStats(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(stats)
+}
+
+func (s *APIServer) handleGetCacheStats(w http.ResponseWriter, r *http.Request) {
+	if s.llmManager == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "LLM manager not initialized"})
+		return
+	}
+
+	cacheStats := s.llmManager.GetCacheStats()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status": "ok",
+		"cache":  cacheStats,
+	})
+}
+
+func (s *APIServer) handleClearCache(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]string{"error": "POST required"})
+		return
+	}
+
+	if s.llmManager == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "LLM manager not initialized"})
+		return
+	}
+
+	s.llmManager.ClearCache()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status": "ok",
+		"message": "Cache cleared",
+	})
 }
 
 func (s *APIServer) handleHealth(w http.ResponseWriter, r *http.Request) {

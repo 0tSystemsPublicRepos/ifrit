@@ -13,6 +13,7 @@ type ClaudeProvider struct {
 	apiKey string
 	model  string
 	client *http.Client
+	cache  *AnalysisCache
 }
 
 type claudeMessage struct {
@@ -38,6 +39,7 @@ type claudeResponse struct {
 	} `json:"usage"`
 }
 
+// NewClaudeProvider creates provider without cache (backwards compatible)
 func NewClaudeProvider(apiKey, model string) *ClaudeProvider {
 	return &ClaudeProvider{
 		apiKey: apiKey,
@@ -45,10 +47,30 @@ func NewClaudeProvider(apiKey, model string) *ClaudeProvider {
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+		cache: NewAnalysisCache(24 * time.Hour),
+	}
+}
+
+// NewClaudeProviderWithCache creates provider with shared cache
+func NewClaudeProviderWithCache(apiKey, model string, cache *AnalysisCache) *ClaudeProvider {
+	return &ClaudeProvider{
+		apiKey: apiKey,
+		model:  model,
+		client: &http.Client{
+			Timeout: 30 * time.Second,
+		},
+		cache: cache,
 	}
 }
 
 func (c *ClaudeProvider) AnalyzeRequest(requestData map[string]string) (*AnalysisResult, error) {
+	// Check cache first
+	if cached, found := c.cache.Get(requestData); found {
+		c.cache.Hit(requestData)
+		fmt.Printf("[CACHE HIT] Reusing Claude analysis for %s %s\n", requestData["method"], requestData["path"])
+		return cached, nil
+	}
+
 	if c.apiKey == "" {
 		return &AnalysisResult{
 			IsAttack:   false,
@@ -64,7 +86,7 @@ func (c *ClaudeProvider) AnalyzeRequest(requestData map[string]string) (*Analysi
 	reqBody := claudeRequest{
 		Model:     c.model,
 		MaxTokens: 500,
-		System:    "You are a security expert analyzing HTTP requests for malicious intent. Respond in JSON format.",
+		System:    "You are a security expert analyzing HTTP requests for malicious intent. Respond in JSON format only.",
 		Messages: []claudeMessage{
 			{
 				Role:    "user",
@@ -116,6 +138,11 @@ func (c *ClaudeProvider) AnalyzeRequest(requestData map[string]string) (*Analysi
 	result := c.parseResponse(responseText)
 	result.TokensUsed = claudeResp.Usage.InputTokens + claudeResp.Usage.OutputTokens
 
+	// Store in cache for future use
+	c.cache.Set(requestData, result)
+	fmt.Printf("[CLAUDE] Analyzed %s %s (confidence: %.2f, now cached)\n", 
+		requestData["method"], requestData["path"], result.Confidence)
+
 	return result, nil
 }
 
@@ -129,7 +156,7 @@ Query: %s
 Headers: %s
 Body: %s
 
-Determine if this is a malicious request. Respond with a JSON object containing:
+Determine if this is a malicious request. Respond with ONLY a JSON object (no markdown, no extra text):
 {
   "is_attack": boolean,
   "attack_type": string or null,
@@ -138,8 +165,8 @@ Determine if this is a malicious request. Respond with a JSON object containing:
   "reasoning": string
 }
 
-Attack types include: sql_injection, xss, path_traversal, command_injection, reconnaissance, credential_stuffing, other, or null if benign.
-Classifications: reconnaissance, exploitation, post_exploitation, or other.
+Attack types: sql_injection, xss, path_traversal, command_injection, reconnaissance, credential_stuffing, other, or null
+Classifications: reconnaissance, exploitation, post_exploitation, or other
 `,
 		requestData["method"],
 		requestData["path"],

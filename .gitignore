@@ -67,3 +67,9 @@ coverage.out
 dist/
 build/
 
+
+# Configuration with secrets
+config/default.json
+config/default.yaml
+config/default.yml
+
