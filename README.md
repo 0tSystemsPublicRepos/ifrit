@@ -1,16 +1,11 @@
-# IFRIT Proxy
-
-**Intelligent Threats Deception**
-
-IFRIT is an intelligent reverse proxy that transforms every attack into threat intelligence. It sits between attackers and production infrastructure, intercepting malicious requests and making real-time decisions: return fake data to confuse the attacker, or pass legitimate traffic through unchanged.
-
+# IFRIT Proxy - Intelligent Threats Deception
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 ---
 
 ## Overview
 
-IFRIT operates as intelligent middleware between the internet and production applications. When a request arrives, IFRIT makes a real-time decision: pass it through to the legitimate backend or serve a honeypot response.
+IFRIT operates as intelligent proxy between the internet and production applications. When a request arrives, IFRIT makes a real-time decision: pass it through to the legitimate backend or serve a honeypot response.
 
 The decision-making process follows a **four-stage pipeline**:
 
