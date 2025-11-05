@@ -68,6 +68,7 @@ type GPTConfig struct {
 }
 
 type DetectionConfig struct {
+	Mode             string   `json:"mode"`              // "detection" or "allowlist"
 	EnableLocalRules bool     `json:"enable_local_rules"`
 	EnableLLM        bool     `json:"enable_llm"`
 	LLMOnlyOn        []string `json:"llm_only_on"`
@@ -193,6 +194,7 @@ func getDefaults() *Config {
 			},
 		},
 		Detection: DetectionConfig{
+			Mode:             "detection",
 			EnableLocalRules: true,
 			EnableLLM:        true,
 			LLMOnlyOn:        []string{"POST", "PUT", "DELETE"},
@@ -248,6 +250,9 @@ func getDefaults() *Config {
 }
 
 func applyDefaults(cfg *Config) {
+	if cfg.Detection.Mode == "" {
+		cfg.Detection.Mode = "detection"
+	}
 	if cfg.Server.ListenAddr == "" {
 		cfg.Server.ListenAddr = ":8080"
 	}

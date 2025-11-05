@@ -79,6 +79,7 @@ func main() {
 	// Initialize detection engine (AFTER anonymization engine)
 	fmt.Println("Initializing detection engine...")
 	detectionEngine := detection.NewDetectionEngine(
+		cfg.Detection.Mode,
 		cfg.Detection.WhitelistIPs,
 		cfg.Detection.WhitelistPaths,
 		db,
@@ -86,6 +87,7 @@ func main() {
 		anonEngine,
 	)
 	fmt.Println("✓ Detection engine initialized")
+	fmt.Printf("  Mode: %s\n", cfg.Detection.Mode)
 
 	// Initialize payload manager
 	fmt.Println("Initializing payload manager...")
@@ -140,7 +142,7 @@ func main() {
 		clientIP := proxy.GetClientIP(r)
 		log.Printf("[REQUEST] %s %s from %s", r.Method, r.URL.Path, clientIP)
 
-		// Check exceptions first
+	 	// Check exceptions first
 		if detectionEngine.CheckExceptions(r, clientIP) {
 			log.Printf("[EXCEPTION] Request whitelisted: %s %s", r.Method, r.URL.Path)
 			logging.Debug("Request from whitelisted IP: %s", clientIP)
@@ -151,8 +153,36 @@ func main() {
 			}
 			defer resp.Body.Close()
 			reverseProxy.CopyResponse(w, resp)
-			return
-		}
+		return
+		}	
+
+		// In allowlist mode, block non-whitelisted requests
+		if cfg.Detection.Mode == "allowlist" {
+			log.Printf("[ALLOWLIST] Blocking non-whitelisted request from %s to %s %s", clientIP, r.Method, r.URL.Path)
+			logging.Attack(clientIP, r.Method, r.URL.Path, "blocked_by_allowlist", "Allowlist Mode")
+			db.StoreAttackInstance(0, clientIP, "", r.URL.Path, r.Method)
+		
+			// Treat as attack and use payload management
+			payloadResp, err := payloadManager.GetPayloadForAttack(
+				payload.AttackerContext{
+				SourceIP:       clientIP,
+				AttackType:     "blocked_by_allowlist",
+				Classification: "policy",
+				Path:           r.URL.Path,
+		},
+		&cfg.PayloadManagement,
+		llmManager,
+	)
+	if err != nil || payloadResp == nil {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"error": "Forbidden"}`))
+		return
+	}
+	w.Header().Set("Content-Type", payloadResp.ContentType)
+	w.WriteHeader(payloadResp.StatusCode)
+	w.Write([]byte(payloadResp.Body))
+	return
+}
 
 		// Stage 1: Check local rules
 		result := detectionEngine.CheckLocalRules(r)
