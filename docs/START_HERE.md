@@ -2,13 +2,8 @@
 
 Welcome! This file will guide you through the complete IFRIT Proxy documentation package.
 
-## Quick Navigation by Role
-
-### I'm a Manager/Executive
+### What can I do with IFRIT ? How it works ?
 Read: `docs/FEATURES.md` - Execution Modes section (5 minutes)
-
-### I'm a Security Team Lead  
-Read: `docs/FEATURES.md` (20 minutes)
 
 ### I'm Setting Up IFRIT
 Read: `docs/INSTALLATION.md` (15 minutes)
@@ -18,7 +13,7 @@ Read: `docs/ifrit_architecture.md` (30-40 minutes)
 
 ## Key Concepts (2-Minute Summary)
 
-IFRIT Proxy is an intelligent reverse proxy that sits between attackers and your real infrastructure.
+IFRIT Proxy is an intelligent reverse proxy that sits between attackers and your infrastructure.
 
 When an attack comes in, IFRIT makes a smart decision: Is this obviously malicious? Is it a pattern we've seen before? Or do we need to ask Claude/GPT?
 
@@ -28,7 +23,7 @@ IFRIT learns continuously. Each attack analyzed becomes a learned pattern. After
 
 ## Three Execution Modes
 
-### Onboarding Mode (Week 1)
+### Onboarding Mode (To accelerate configuration and adoption)
 - Auto-detects attacks
 - Auto-whitelists paths
 - Zero false positives
@@ -44,6 +39,23 @@ IFRIT learns continuously. Each attack analyzed becomes a learned pattern. After
 - Honeypot responses
 - Real-time learning
 - Claude/GPT integration
+
+## Two Detection Modes
+
+### Detection Mode (Default)
+- Smart threat analysis
+- Learns attack patterns
+- Optional whitelist for exceptions
+- ~3% false positive rate possible
+
+### Allowlist Mode (New)
+- Strict access control
+- Only whitelisted IPs/paths allowed
+- Everything else blocked
+- Zero false positives
+- Perfect for VPN-only or admin portals
+
+See `docs/DETECTION_MODES.md` for detailed comparison and configuration.
 
 ## Quick Start
 ```bash
@@ -73,8 +85,11 @@ See `docs/INSTALLATION.md` for detailed setup.
 
 - **FEATURES.md** - All features, CLI commands, REST API, configuration
 - **INSTALLATION.md** - Setup for macOS, Linux, Docker
-- **ifrit_architecture.md** - Technical deep dive (existing)
-- **ifrit_documentation.md** - Comprehensive overview (existing)
+- **DETECTION_MODES.md** - Detection vs Allowlist modes, configuration examples
+- **PAYLOAD_MANAGEMENT.md** - Honeypot response system, caching, customization
+- **ANONYMIZATION_TESTING.md** - Data privacy, testing results
+- **ifrit_architecture.md** - Technical deep dive
+- **ifrit_documentation.md** - Comprehensive overview
 
 ## Execution Mode Guide
 
@@ -100,39 +115,49 @@ See `docs/INSTALLATION.md` for detailed setup.
 
 ## Key Features
 
-✅ **4-Stage Detection Pipeline**
+**4-Stage Detection Pipeline**
 - Stage 0: Whitelist exceptions
 - Stage 1: Local rules (instant)
 - Stage 2: Database patterns (learned)
 - Stage 3: LLM analysis (Claude/GPT)
 
-✅ **Onboarding Mode**
+**Two Detection Modes**
+- Detection Mode: Smart analysis with optional whitelist
+- Allowlist Mode: Strict access control (VPN, admin portals)
+
+**Onboarding Mode**
 - Auto-whitelist detection
 - Zero configuration needed
 - Automatic baseline
 
-✅ **Complete CLI**
+**Complete CLI**
 - Manage patterns, attacks, attackers
 - Whitelist/exception management
 - Database statistics
 
-✅ **REST API**
+**REST API**
 - Pattern queries
 - Attack statistics
 - Cache management
 
-✅ **Threat Intelligence**
+**Threat Intelligence**
 - Attack classification
 - Attacker profiling
 - Pattern learning
 
+**Data Privacy**
+- Sensitive data anonymization (LLMs requests data are anonymized)
+- GDPR/HIPAA compliant
+- No credentials or sensitive Headers sent to LLMs
+
 ## Next Steps
 
 1. **Read INSTALLATION.md** - Set up IFRIT
-2. **Read FEATURES.md** - Understand all capabilities
-3. **Deploy in Onboarding Mode** - Start learning
-4. **Monitor for 1 week** - Review traffic
-5. **Switch to Normal Mode** - Full protection
+2. **Read DETECTION_MODES.md** - Choose your security model
+3. **Read FEATURES.md** - Understand all capabilities
+4. **Deploy in Onboarding Mode** - Start learning
+5. **Monitor for 1 week** - Review traffic
+6. **Switch to Normal Mode** - Full protection
 
 ## Support
 
@@ -142,7 +167,7 @@ See `docs/INSTALLATION.md` for detailed setup.
 
 ---
 
-**Status:** MVP v0.1 (November 2025)  
+**Status:** MVP v0.1   
 **License:** Apache 2.0  
-**Python:** Not required (pure Go)  
-**Database:** SQLite (local, no external dependencies)
+**Language:** Pure Go (no Python required)  
+**Database:** SQLite (local, zero external dependencies)

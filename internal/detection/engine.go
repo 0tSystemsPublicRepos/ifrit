@@ -18,6 +18,7 @@ import (
 )
 
 type DetectionEngine struct {
+	mode           string
 	localRules     []*Rule
 	whitelistIPs   map[string]bool
 	whitelistPaths []*regexp.Regexp
@@ -44,8 +45,9 @@ type DetectionResult struct {
 	ResponseCode    int
 }
 
-func NewDetectionEngine(whitelistIPs []string, whitelistPaths []string, db *database.SQLiteDB, llmManager *llm.Manager, anonEngine *anonymization.AnonymizationEngine) *DetectionEngine {
+func NewDetectionEngine(mode string, whitelistIPs []string, whitelistPaths []string, db *database.SQLiteDB, llmManager *llm.Manager, anonEngine *anonymization.AnonymizationEngine) *DetectionEngine {
 	engine := &DetectionEngine{
+		mode:           mode,
 		whitelistIPs: make(map[string]bool),
 		db:           db,
 		llmManager:   llmManager,
