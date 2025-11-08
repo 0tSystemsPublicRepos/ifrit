@@ -1,11 +1,15 @@
 package main
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"text/tabwriter"
 	"time"
+	"crypto/rand"
+	"math/big"
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/spf13/cobra"
@@ -85,7 +89,7 @@ Manage attacks, patterns, attackers, exceptions, keyword exceptions, intel templ
 		&cobra.Command{Use: "disable [id]", Short: "Disable exception", Args: cobra.ExactArgs(1), Run: disableException},
 	)
 
-	// Keyword Exception commands (NEW)
+	// Keyword Exception commands
 	keywordCmd := &cobra.Command{
 		Use:   "keyword",
 		Short: "Manage keyword exceptions",
@@ -97,7 +101,7 @@ Manage attacks, patterns, attackers, exceptions, keyword exceptions, intel templ
 		&cobra.Command{Use: "remove [id]", Short: "Remove keyword exception", Args: cobra.ExactArgs(1), Run: removeKeywordException},
 	)
 
-	// Intel Template commands (NEW)
+	// Intel Template commands
 	intelCmd := &cobra.Command{
 		Use:   "intel",
 		Short: "Manage intel collection templates",
@@ -108,7 +112,7 @@ Manage attacks, patterns, attackers, exceptions, keyword exceptions, intel templ
 		&cobra.Command{Use: "toggle [id]", Short: "Toggle intel template active status", Args: cobra.ExactArgs(1), Run: toggleIntelTemplate},
 	)
 
-	// Payload Template commands (NEW)
+	// Payload Template commands
 	payloadCmd := &cobra.Command{
 		Use:   "payload",
 		Short: "Manage payload templates",
@@ -119,7 +123,7 @@ Manage attacks, patterns, attackers, exceptions, keyword exceptions, intel templ
 		&cobra.Command{Use: "stats", Short: "Payload statistics", Run: payloadStats},
 	)
 
-	// Legitimate requests commands (NEW)
+	// Legitimate requests commands
 	legitimateCmd := &cobra.Command{
 		Use:   "legitimate",
 		Short: "Query legitimate requests cache",
@@ -129,7 +133,7 @@ Manage attacks, patterns, attackers, exceptions, keyword exceptions, intel templ
 		&cobra.Command{Use: "stats", Short: "Cache statistics", Run: legitimateStats},
 	)
 
-	// Attacker interactions commands (NEW)
+	// Attacker interactions commands
 	interactionCmd := &cobra.Command{
 		Use:   "interaction",
 		Short: "Query attacker interactions",
@@ -149,7 +153,19 @@ Manage attacks, patterns, attackers, exceptions, keyword exceptions, intel templ
 		&cobra.Command{Use: "schema", Short: "Show database schema", Run: showSchema},
 	)
 
-	rootCmd.AddCommand(attackCmd, patternCmd, attackerCmd, exceptionCmd, keywordCmd, intelCmd, payloadCmd, legitimateCmd, interactionCmd, dbCmd)
+	// API Token commands
+	tokenCmd := &cobra.Command{
+		Use:   "token",
+		Short: "Manage API tokens",
+	}
+	tokenCmd.AddCommand(
+		&cobra.Command{Use: "list", Short: "List all API tokens", Run: listTokens},
+		&cobra.Command{Use: "create [user_id] [token_name]", Short: "Create new API token", Args: cobra.ExactArgs(2), Run: createToken},
+		&cobra.Command{Use: "revoke [id]", Short: "Revoke API token", Args: cobra.ExactArgs(1), Run: revokeToken},
+		&cobra.Command{Use: "validate [token]", Short: "Validate API token", Args: cobra.ExactArgs(1), Run: validateToken},
+	)
+
+	rootCmd.AddCommand(attackCmd, patternCmd, attackerCmd, exceptionCmd, keywordCmd, intelCmd, payloadCmd, legitimateCmd, interactionCmd, dbCmd, tokenCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Println(err)
@@ -643,7 +659,7 @@ func disableException(cmd *cobra.Command, args []string) {
 	fmt.Printf("✓ Exception disabled\n")
 }
 
-// ============== KEYWORD EXCEPTION COMMANDS (NEW) ==============
+// ============== KEYWORD EXCEPTION COMMANDS ==============
 
 func listKeywordExceptions(cmd *cobra.Command, args []string) {
 	rows, err := db.Query(`
@@ -758,7 +774,7 @@ func removeKeywordException(cmd *cobra.Command, args []string) {
 	}
 }
 
-// ============== INTEL TEMPLATE COMMANDS (NEW) ==============
+// ============== INTEL TEMPLATE COMMANDS ==============
 
 func listIntelTemplates(cmd *cobra.Command, args []string) {
 	rows, err := db.Query(`
@@ -811,7 +827,6 @@ func viewIntelTemplate(cmd *cobra.Command, args []string) {
 		act = "Enabled"
 	}
 
-	// Truncate long content
 	if len(content) > 200 {
 		content = content[:200] + "..."
 	}
@@ -852,7 +867,7 @@ func toggleIntelTemplate(cmd *cobra.Command, args []string) {
 	fmt.Printf("✓ Intel template %s\n", status)
 }
 
-// ============== PAYLOAD TEMPLATE COMMANDS (NEW) ==============
+// ============== PAYLOAD TEMPLATE COMMANDS ==============
 
 func listPayloads(cmd *cobra.Command, args []string) {
 	rows, err := db.Query(`
@@ -930,7 +945,7 @@ Intelligence:    Enabled
 `, total, active)
 }
 
-// ============== LEGITIMATE REQUESTS COMMANDS (NEW) ==============
+// ============== LEGITIMATE REQUESTS COMMANDS ==============
 
 func listLegitimate(cmd *cobra.Command, args []string) {
 	rows, err := db.Query(`
@@ -973,7 +988,7 @@ Cache Status:        Active
 `, total, hitCount)
 }
 
-// ============== ATTACKER INTERACTIONS COMMANDS (NEW) ==============
+// ============== ATTACKER INTERACTIONS COMMANDS ==============
 
 func listInteractions(cmd *cobra.Command, args []string) {
 	rows, err := db.Query(`
@@ -1097,4 +1112,149 @@ API & LOGGING
 - api_users             API user accounts
 - api_tokens            API authentication tokens
 `)
+}
+
+// ============== API TOKEN COMMANDS ==============
+
+func listTokens(cmd *cobra.Command, args []string) {
+	rows, err := db.Query(`
+		SELECT id, user_id, token_name, token_prefix, expires_at, created_at
+		FROM api_tokens ORDER BY created_at DESC
+	`)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+	defer rows.Close()
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "ID\tUSER ID\tNAME\tPREFIX\tEXPIRES AT\tSTATUS")
+
+	count := 0
+	for rows.Next() {
+		var id, userID int
+		var name, prefix, expiresAt, created string
+		rows.Scan(&id, &userID, &name, &prefix, &expiresAt, &created)
+		
+		expTime, _ := time.Parse(time.RFC3339, expiresAt)
+		status := "Active"
+		if time.Now().After(expTime) {
+			status = "EXPIRED"
+		}
+		
+		fmt.Fprintf(w, "%d\t%d\t%s\t%s...\t%s\t%s\n", id, userID, name, prefix, expiresAt, status)
+		count++
+	}
+	w.Flush()
+	fmt.Printf("\nTotal: %d API tokens\n", count)
+}
+
+func createToken(cmd *cobra.Command, args []string) {
+	userID := args[0]
+	tokenName := args[1]
+	
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	b := make([]byte, 32)
+	for i := range b {
+		// Use crypto/rand instead of sequential
+		num, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		if err != nil {
+			fmt.Printf("Error generating token: %v\n", err)
+			return
+		}
+		b[i] = charset[num.Int64()]
+	}
+	tokenString := "ifr_" + string(b)
+	
+	hash := sha256.Sum256([]byte(tokenString))
+	tokenHash := hex.EncodeToString(hash[:])
+	tokenPrefix := tokenString[:8]
+	expiresAt := time.Now().AddDate(0, 0, 90).Format(time.RFC3339)
+	
+	stmt, err := db.Prepare(`
+		INSERT INTO api_tokens (user_id, token_name, token_hash, token_prefix, app_id, permissions, expires_at, created_at)
+		VALUES (?, ?, ?, ?, 'default', '["read","write"]', ?, ?)
+	`)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+	defer stmt.Close()
+	
+	now := time.Now().Format(time.RFC3339)
+	result, err := stmt.Exec(userID, tokenName, tokenHash, tokenPrefix, expiresAt, now)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+	
+	id, _ := result.LastInsertId()
+	fmt.Printf("✓ Token created successfully\n")
+	fmt.Printf("  ID:       %d\n", id)
+	fmt.Printf("  Token:    %s\n", tokenString)
+	fmt.Printf("  Expires:  %s\n\n", expiresAt)
+	fmt.Printf("Save this token - you won't see it again!\n")
+}
+
+func revokeToken(cmd *cobra.Command, args []string) {
+	stmt, err := db.Prepare("DELETE FROM api_tokens WHERE id = ?")
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+	defer stmt.Close()
+	
+	result, err := stmt.Exec(args[0])
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+	
+	affected, _ := result.RowsAffected()
+	if affected > 0 {
+		fmt.Printf("✓ Token revoked\n")
+	} else {
+		fmt.Printf("✗ Token not found\n")
+	}
+}
+
+func validateToken(cmd *cobra.Command, args []string) {
+	tokenString := args[0]
+	hash := sha256.Sum256([]byte(tokenString))
+	tokenHash := hex.EncodeToString(hash[:])
+	
+	var id, userID int
+	var tokenName, appID, permissions, expiresAt string
+	
+	err := db.QueryRow(`
+		SELECT id, user_id, token_name, app_id, permissions, expires_at
+		FROM api_tokens WHERE token_hash = ?
+	`, tokenHash).Scan(&id, &userID, &tokenName, &appID, &permissions, &expiresAt)
+	
+	if err == sql.ErrNoRows {
+		fmt.Printf("✗ Invalid token\n")
+		return
+	}
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+	
+	expTime, _ := time.Parse(time.RFC3339, expiresAt)
+	status := "Valid"
+	if time.Now().After(expTime) {
+		status = "EXPIRED"
+	}
+	
+	fmt.Printf(`
+Token Validation
+================
+Status:       %s
+ID:           %d
+User ID:      %d
+Token Name:   %s
+App ID:       %s
+Permissions:  %s
+Expires At:   %s
+`, status, id, userID, tokenName, appID, permissions, expiresAt)
 }
