@@ -5,14 +5,14 @@
 
 ## Overview
 
-IFRIT operates as intelligent proxy between the internet and production applications. When a request arrives, IFRIT makes a real-time decision: pass it through to the legitimate backend or serve a honeypot response.
+IFRIT is an AI-powered reverse proxy that intercepts incoming requests in real time, classifying each one as legitimate or malicious. Legitimate traffic is forwarded to backend; malicious traffic receives a customized AI-generated honeypot response that mimics the requested resource with fabricated data, deceiving attackers into wasting time on fake targets.
 
-The decision-making process follows a **four-stage pipeline**:
+The proxy decision-making process follows a **four-stage pipeline**:
 
 1. **Stage 0: Whitelist Check** - Does this IP/path have an exception? → Pass through
 2. **Stage 1: Local Rules** - Does this match obvious attack patterns? → Honeypot
 3. **Stage 2: Database Patterns** - Have we seen this attack before? → Honeypot (cached)
-4. **Stage 3: LLM Analysis** - Is this a novel attack? → Call Claude/GPT → Honeypot
+4. **Stage 3: LLM Analysis** - AI: Is this a novel attack? → Generate Honeypot response tailored to this specific attack
 
 **Throughout this process:**
 - Sensitive data is anonymized before reaching local/external LLMs (as of current version only support Anthropic Claude)
