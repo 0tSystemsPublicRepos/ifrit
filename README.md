@@ -654,4 +654,4 @@ IFRIT Proxy is licensed under [Apache License 2.0](LICENSE). For commercial supp
 
 Built with Go, SQLite, Anthropic/Google AI, and the security community's collective threat intelligence.
 
-**v0.2.0 Contributors:** 0tSystems Security Team
+**v0.2.1 Contributors:** 0tSystems Security Team
