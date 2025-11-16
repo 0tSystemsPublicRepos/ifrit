@@ -4,13 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/0tSystemsPublicRepos/ifrit/internal/config"
 	"github.com/0tSystemsPublicRepos/ifrit/internal/database"
+	"github.com/0tSystemsPublicRepos/ifrit/internal/logging"
 )
 
 type Enricher struct {
@@ -82,7 +82,7 @@ func (e *Enricher) EnrichIP(appID, sourceIP string) (*EnrichmentResult, error) {
 	// Check if already cached
 	cached, err := e.db.IsThreatIntelligenceCached(appID, sourceIP)
 	if err == nil && cached {
-		log.Printf("[THREAT_INTEL] Cache hit for IP: %s (app_id: %s)", sourceIP, appID)
+		logging.Info("[THREAT_INTEL] Cache hit for IP: %s (app_id: %s)", sourceIP, appID)
 		return nil, nil // Return from cache, don't re-enrich
 	}
 
@@ -104,14 +104,14 @@ func (e *Enricher) EnrichIP(appID, sourceIP string) (*EnrichmentResult, error) {
 			defer wg.Done()
 			data, err := e.enrichFromAbuseIPDB(sourceIP)
 			if err != nil {
-				log.Printf("[THREAT_INTEL] AbuseIPDB error for %s: %v", sourceIP, err)
+				logging.Error("[THREAT_INTEL] AbuseIPDB error for %s: %v", sourceIP, err)
 				mu.Lock()
 				errors = append(errors, err)
 				mu.Unlock()
 				return
 			}
 			result.AbuseIPDB = data
-			log.Printf("[THREAT_INTEL] AbuseIPDB enriched %s: score=%.1f", sourceIP, data.Score)
+			logging.Info("[THREAT_INTEL] AbuseIPDB enriched %s: score=%.1f", sourceIP, data.Score)
 		}()
 	}
 
@@ -122,14 +122,14 @@ func (e *Enricher) EnrichIP(appID, sourceIP string) (*EnrichmentResult, error) {
 			defer wg.Done()
 			data, err := e.enrichFromVirusTotal(sourceIP)
 			if err != nil {
-				log.Printf("[THREAT_INTEL] VirusTotal error for %s: %v", sourceIP, err)
+				logging.Error("[THREAT_INTEL] VirusTotal error for %s: %v", sourceIP, err)
 				mu.Lock()
 				errors = append(errors, err)
 				mu.Unlock()
 				return
 			}
 			result.VirusTotal = data
-			log.Printf("[THREAT_INTEL] VirusTotal enriched %s: malicious=%d suspicious=%d", sourceIP, data.Malicious, data.Suspicious)
+			logging.Info("[THREAT_INTEL] VirusTotal enriched %s: malicious=%d suspicious=%d", sourceIP, data.Malicious, data.Suspicious)
 		}()
 	}
 
@@ -140,14 +140,14 @@ func (e *Enricher) EnrichIP(appID, sourceIP string) (*EnrichmentResult, error) {
 			defer wg.Done()
 			data, err := e.enrichFromIPInfo(sourceIP)
 			if err != nil {
-				log.Printf("[THREAT_INTEL] IPInfo error for %s: %v", sourceIP, err)
+				logging.Error("[THREAT_INTEL] IPInfo error for %s: %v", sourceIP, err)
 				mu.Lock()
 				errors = append(errors, err)
 				mu.Unlock()
 				return
 			}
 			result.IPInfo = data
-			log.Printf("[THREAT_INTEL] IPInfo enriched %s: country=%s city=%s", sourceIP, data.Country, data.City)
+			logging.Info("[THREAT_INTEL] IPInfo enriched %s: country=%s city=%s", sourceIP, data.Country, data.City)
 		}()
 	}
 
@@ -159,7 +159,7 @@ func (e *Enricher) EnrichIP(appID, sourceIP string) (*EnrichmentResult, error) {
 	// Store in database
 	err = e.storeEnrichment(appID, result)
 	if err != nil {
-		log.Printf("[THREAT_INTEL] Error storing enrichment for %s: %v", sourceIP, err)
+		logging.Error("[THREAT_INTEL] Error storing enrichment for %s: %v", sourceIP, err)
 	}
 
 	return result, nil
@@ -335,7 +335,7 @@ func (e *Enricher) calculateRiskScore(result *EnrichmentResult) {
 	if result.AbuseIPDB != nil {
 		abuseScore := result.AbuseIPDB.AbuseConfidenceScore * e.config.RiskScoreWeights.AbuseIPDBScore
 		score += abuseScore
-		log.Printf("[THREAT_INTEL] AbuseIPDB contribution: %.1f (%.1f * 0.4)", abuseScore, result.AbuseIPDB.AbuseConfidenceScore)
+		logging.Debug("[THREAT_INTEL] AbuseIPDB contribution: %.1f (%.1f * 0.4)", abuseScore, result.AbuseIPDB.AbuseConfidenceScore)
 	}
 
 	// VirusTotal detections (35% weight)
@@ -347,7 +347,7 @@ func (e *Enricher) calculateRiskScore(result *EnrichmentResult) {
 		}
 		vtScore = vtScore * e.config.RiskScoreWeights.VirusTotalDetections
 		score += vtScore
-		log.Printf("[THREAT_INTEL] VirusTotal contribution: %.1f (detections=%d)", vtScore, totalDetections)
+		logging.Debug("[THREAT_INTEL] VirusTotal contribution: %.1f (detections=%d)", vtScore, totalDetections)
 	}
 
 	// IPInfo risk (25% weight) - based on privacy type
@@ -362,7 +362,7 @@ func (e *Enricher) calculateRiskScore(result *EnrichmentResult) {
 		}
 		ipinfoScore = ipinfoScore * e.config.RiskScoreWeights.IPInfoRisk
 		score += ipinfoScore
-		log.Printf("[THREAT_INTEL] IPInfo contribution: %.1f (privacy=%s)", ipinfoScore, result.IPInfo.Privacy.Type)
+		logging.Debug("[THREAT_INTEL] IPInfo contribution: %.1f (privacy=%s)", ipinfoScore, result.IPInfo.Privacy.Type)
 	}
 
 	result.RiskScore = int(score)
@@ -378,7 +378,7 @@ func (e *Enricher) calculateRiskScore(result *EnrichmentResult) {
 		result.ThreatLevel = "LOW"
 	}
 
-	log.Printf("[THREAT_INTEL] Final risk score for %s: %d (%s)", result.SourceIP, result.RiskScore, result.ThreatLevel)
+	logging.Info("[THREAT_INTEL] Final risk score for %s: %d (%s)", result.SourceIP, result.RiskScore, result.ThreatLevel)
 }
 
 // storeEnrichment saves enrichment result to database
@@ -430,10 +430,10 @@ func (e *Enricher) storeEnrichment(appID string, result *EnrichmentResult) error
 	)
 
 	if err != nil {
-		log.Printf("[THREAT_INTEL] Error storing enrichment: %v", err)
+		logging.Error("[THREAT_INTEL] Error storing enrichment: %v", err)
 		return err
 	}
 
-	log.Printf("[THREAT_INTEL] Enrichment stored for %s: risk_score=%d threat_level=%s", result.SourceIP, result.RiskScore, result.ThreatLevel)
+	logging.Info("[THREAT_INTEL] Enrichment stored for %s: risk_score=%d threat_level=%s", result.SourceIP, result.RiskScore, result.ThreatLevel)
 	return nil
 }

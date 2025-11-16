@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"log"
 	"net"
@@ -26,66 +25,74 @@ import (
 	"github.com/0tSystemsPublicRepos/ifrit/internal/notifications"
 )
 
-func main() {
-	fmt.Println("                                                                             \n        ø       æææææææææææææææ  <æææææææææææææ     æææææ  ¤æææææææææææææææ  \n        øø      æ             æ  <æ            ææ   æ  ææ  ¤æ            \"æ  \n       øøø      æ  ææææææææææææ  <ææææææææææææ ææ   æ  ææ  ¤ææææææh æø ææææ  \n     <øøø  ø    æ  æø                         ææ    æ  ææ        æh æø       \n   ¤øøøø  øø    æ  ¤¤¤¤¤¤¤¤¤<    <æ/</<<<<<<¤‚      æ  ææ        æh æø       \n  \"øøø‚ åøå C   æ  æø            <æ \"ææææææ  æ‚     æ  ææ        æy æø       \n   øøø  ø  Cø   æ  æø            <æ \"æ    ææ  æ     æ            æy æø       \n    hø< \"¤ø     ææææø            <ææææ     æææææÐ   æææææ        ææææø       \n                                                                             \n                Author : Mehdi T - ifrit@0t.systems\n\t\tVersion: 0.1 (MVP)                                                                   \n                                                                             ")
+const (
+	ModeOnboarding = "onboarding"
+	ModeDetection  = "detection"
+)
 
-	// Load configuration
+func main() {
+	// ============================================================
+	// STEP 1: Load configuration 
+	// ============================================================
 	cfg, err := config.Load("")
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
-	fmt.Printf("Configuration loaded\n")
-	fmt.Printf("Database: %s (type: %s)\n", cfg.Database.SQLite.Path, cfg.Database.Type)
-	fmt.Printf("Proxy target: %s\n", cfg.Server.ProxyTarget)
-	fmt.Printf("LLM Provider: %s\n", cfg.LLM.Primary)
-	if cfg.Server.MultiAppMode {
-		fmt.Printf("Multi-app mode: ENABLED (header: %s)\n", cfg.Server.AppIDHeader)
-	} else {
-		fmt.Printf("Multi-app mode: DISABLED\n")
-	}
-	fmt.Println()
-
-	// Initialize logging
-	fmt.Println("Initializing logging...")
-	if err := logging.Init(cfg.System.LogDir); err != nil {
+	// ============================================================
+	// STEP 2: Initialize logging 
+	// ============================================================
+	if err := logging.Init(cfg.System.LogDir, &cfg.System.LogRotation, cfg.System.LogLevel, cfg.System.Debug); err != nil {
 		log.Printf("Warning: Failed to initialize logging: %v\n", err)
 	}
 	defer logging.Close()
 
+	log.Println("\n\n                                                                             \n        ø       æææææææææææææææ  <æææææææææææææ     æææææ  ¤æææææææææææææææ  \n        øø      æ             æ  <æ            ææ   æ  ææ  ¤æ            \"æ  \n       øøø      æ  ææææææææææææ  <ææææææææææææ ææ   æ  ææ  ¤ææææææh æø ææææ  \n     <øøø  ø    æ  æø                         ææ    æ  ææ        æh æø       \n   ¤øøøø  øø    æ  ¤¤¤¤¤¤¤¤¤<    <æ/</<<<<<<¤‚      æ  ææ        æh æø       \n  \"øøø‚ åøå C   æ  æø            <æ \"ææææææ  æ‚     æ  ææ        æy æø       \n   øøø  ø  Cø   æ  æø            <æ \"æ    ææ  æ     æ            æy æø       \n    hø< \"¤ø     ææææø            <ææææ     æææææÐ   æææææ        ææææø       \n                                                                             \n                Author : Mehdi T - ifrit@0t.systems\n\t\tVersion: 0.2.1                                                     \n                                                                             ")
+
+	log.Printf("Configuration loaded\n")
+	log.Printf("Database: %s (type: %s)\n", cfg.Database.SQLite.Path, cfg.Database.Type)
+	log.Printf("Proxy target: %s\n", cfg.Server.ProxyTarget)
+	log.Printf("LLM Provider: %s\n", cfg.LLM.Primary)
+	log.Printf("Execution Mode: %s\n", cfg.ExecutionMode.Mode)
+	if cfg.Server.MultiAppMode {
+		log.Printf("Multi-app mode: ENABLED (header: %s)\n", cfg.Server.AppIDHeader)
+	} else {
+		log.Printf("Multi-app mode: DISABLED\n")
+	}
+	log.Println()
+
 	// Initialize database
-	fmt.Println("Initializing database...")
+	log.Println("Initializing database...")
 	db, err := database.InitializeDatabase(cfg.Database.SQLite.Path)
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 	defer db.Close()
-	fmt.Println("✓ Database initialized")
+	log.Println("✓ Database initialized")
 
 	// Initialize LLM Manager
-	fmt.Println("Initializing LLM providers...")
+	log.Println("Initializing LLM providers...")
 	llmManager := llm.NewManager(
 		cfg.LLM.Primary,
 		cfg.LLM.Claude.APIKey,
 		cfg.LLM.Claude.Model,
-		"claude", // fallback to claude
-		cfg.LLM.Claude.APIKey,
-		cfg.LLM.Claude.Model,
+		cfg.LLM.Gemini.APIKey,
+		cfg.LLM.Gemini.Model,
 	)
-	fmt.Printf("✓ LLM Manager initialized (primary: %s)\n", llmManager.GetPrimaryName())
+	log.Printf("✓ LLM Manager initialized (primary: %s)\n", llmManager.GetPrimaryName())
 
 	// Initialize anonymization engine
-	fmt.Println("Initializing anonymization engine...")
+	log.Println("Initializing anonymization engine...")
 	anonEngine := anonymization.NewAnonymizationEngine(
 		cfg.Anonymization.Enabled,
 		cfg.Anonymization.Strategy,
 		cfg.Anonymization.StoreOriginal,
 		cfg.Anonymization.SensitiveHeaders,
 	)
-	fmt.Printf("✓ Anonymization engine initialized (strategy: %s)\n", cfg.Anonymization.Strategy)
+	log.Printf("✓ Anonymization engine initialized (strategy: %s)\n", cfg.Anonymization.Strategy)
 
 	// Initialize detection engine
-	fmt.Println("Initializing detection engine...")
+	log.Println("Initializing detection engine...")
 	detectionEngine := detection.NewDetectionEngine(
 		cfg.Detection.Mode,
 		cfg.Detection.WhitelistIPs,
@@ -94,26 +101,26 @@ func main() {
 		llmManager,
 		anonEngine,
 	)
-	fmt.Println("✓ Detection engine initialized")
-	fmt.Printf("  Mode: %s\n", cfg.Detection.Mode)
+	log.Println("✓ Detection engine initialized")
+	log.Printf("  Mode: %s\n", cfg.Detection.Mode)
 
 	// Initialize payload manager
-	fmt.Println("Initializing payload manager...")
+	log.Println("Initializing payload manager...")
 	payloadManager := payload.NewPayloadManager(db.GetDB())
 	payloadManager.SetLLMManager(llmManager)
-	fmt.Println("✓ Payload manager initialized")
+	log.Println("✓ Payload manager initialized")
 
 	// Initialize threat intelligence manager
-	fmt.Println("Initializing threat intelligence manager...")
+	log.Println("Initializing threat intelligence manager...")
 	tiManager := threat_intelligence.NewManager(&cfg.ThreatIntelligence, db)
 	tiManager.Start()
-	fmt.Println("✓ Threat Intelligence manager initialized")
+	log.Println("✓ Threat Intelligence manager initialized")
 	defer tiManager.Stop()
 
 	// Initialize notification manager
-	fmt.Println("Initializing notification manager...")
+	log.Println("Initializing notification manager...")
 	notificationManager := notifications.NewManager(cfg, db)
-	fmt.Println("✓ Notification manager initialized")
+	log.Println("✓ Notification manager initialized")
 
 	// Set anonymization engine on Claude provider
 	if provider := llmManager.GetProvider("claude"); provider != nil {
@@ -123,22 +130,33 @@ func main() {
 		}
 	}
 
+	// Set anonymization engine on Gemini provider
+	if provider := llmManager.GetProvider("gemini"); provider != nil {
+		if geminiProvider, ok := provider.(*llm.GeminiProvider); ok {
+			geminiProvider.SetAnonymizationEngine(anonEngine)
+			log.Printf("Gemini provider configured with anonymization engine")
+		}
+	}
+
 	// Initialize execution mode handler
-	fmt.Println("Initializing execution mode handler...")
+	log.Println("Initializing execution mode handler...")
 	modeHandler := execution.NewExecutionModeHandler(&cfg.ExecutionMode, db)
-	fmt.Printf("✓ Execution mode: %s\n", cfg.ExecutionMode.Mode)
-	if modeHandler.IsOnboardingMode() {
-		fmt.Println("  ⚠️  ONBOARDING MODE - All traffic will be whitelisted automatically")
-		fmt.Printf("   Traffic log: %s\n", cfg.ExecutionMode.OnboardingLogFile)
+	
+	log.Printf("✓ Execution mode: '%s' (ModeOnboarding='%s', ModeDetection='%s')\n", 
+  	cfg.ExecutionMode.Mode, ModeOnboarding, ModeDetection)
+
+	if cfg.ExecutionMode.Mode == ModeOnboarding {
+		log.Println("  ⚠️  ONBOARDING MODE - All traffic will be whitelisted and forwarded")
+		log.Printf("   Traffic log: %s\n", cfg.ExecutionMode.OnboardingLogFile)
 	}
 
 	// Initialize API server
-	fmt.Println("Initializing API server...")
+	log.Println("Initializing API server...")
 	apiServer := api.NewAPIServer(cfg.Server.APIListenAddr, "", db, llmManager)
-	fmt.Println("✓ API server initialized")
+	log.Println("✓ API server initialized")
 
 	// Start API server in goroutine
-	fmt.Printf("\nStarting API server on %s\n", cfg.Server.APIListenAddr)
+	log.Printf("\nStarting API server on %s\n", cfg.Server.APIListenAddr)
 	go func() {
 		if err := apiServer.Start(); err != nil && err != http.ErrServerClosed {
 			log.Printf("API server error: %v", err)
@@ -146,7 +164,7 @@ func main() {
 	}()
 
 	// Start main proxy server
-	fmt.Printf("Starting proxy server on %s\n", cfg.Server.ListenAddr)
+	log.Printf("Starting proxy server on %s\n", cfg.Server.ListenAddr)
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -161,10 +179,12 @@ func main() {
 			log.Printf("[REQUEST] app_id=%s | %s %s from %s", appID, r.Method, r.URL.Path, clientIP)
 		}
 
-		// Check exceptions first (with app_id)
-		if detectionEngine.CheckExceptions(r, clientIP, appID) {
-			log.Printf("[EXCEPTION] app_id=%s | Request whitelisted: %s %s", appID, r.Method, r.URL.Path)
-			logging.Debug("Request from whitelisted IP: %s (app: %s)", clientIP, appID)
+		// ============================================
+		// ONBOARDING MODE - Skip all detection
+		// ============================================
+		if cfg.ExecutionMode.Mode == ModeOnboarding {
+			log.Printf("[ONBOARDING] app_id=%s | Auto-whitelisting: %s %s", appID, r.Method, r.URL.Path)
+			modeHandler.HandleOnboardingRequest(r.Method, r.URL.Path, appID)
 			resp, err := forwardRequest(r, cfg, appID)
 			if err != nil {
 				http.Error(w, "Bad Gateway", http.StatusBadGateway)
@@ -175,6 +195,33 @@ func main() {
 			return
 		}
 
+		// ============================================
+		// DETECTION MODE - Run normal pipeline
+		// ============================================
+
+		// Check exceptions first (with app_id)
+		if detectionEngine.CheckExceptions(r, clientIP, appID) {
+		    log.Printf("[EXCEPTION] app_id=%s | Request whitelisted: %s %s", appID, r.Method, r.URL.Path)
+    
+		    // If skip_body_check_on_whitelist is TRUE, forward immediately without analysis
+		    if cfg.Detection.SkipBodyCheckOnWhitelist {
+		        log.Printf("[EXCEPTION] app_id=%s | Skipping body check (skip_body_check_on_whitelist=true)", appID)
+		        logging.Debug("Request from whitelisted IP: %s (app: %s)", clientIP, appID)
+		        resp, err := forwardRequest(r, cfg, appID)
+		        if err != nil {
+		            http.Error(w, "Bad Gateway", http.StatusBadGateway)
+		            return
+		        }
+		        defer resp.Body.Close()
+		        copyResponse(w, resp)
+		        return
+		    }
+	    
+	    // If skip_body_check_on_whitelist is FALSE, continue to detection stages for body/header analysis
+	    log.Printf("[EXCEPTION] app_id=%s | Path whitelisted but analyzing body/headers (skip_body_check_on_whitelist=false)", appID)
+	}
+	
+
 		// In allowlist mode, block non-whitelisted requests
 		if cfg.Detection.Mode == "allowlist" {
 			log.Printf("[ALLOWLIST] app_id=%s | Blocking non-whitelisted request from %s to %s %s", appID, clientIP, r.Method, r.URL.Path)
@@ -184,14 +231,19 @@ func main() {
 			// Enqueue threat intelligence enrichment
 			go tiManager.EnqueueEnrichment(appID, clientIP)
 
-			// Send notifications
+			// Calculate risk score and threat level for allowlist mode
+			// Allowlist violations are considered high severity (75/100)
+			riskScore := 75
+			threatLevel := calculateThreatLevel(riskScore, cfg)
+
+			// Send notifications with dynamic values
 			go func() {
 				notificationManager.Send(&notifications.Notification{
 					AppID:       appID,
-					ThreatLevel: "HIGH",
-					RiskScore:   75,
+					ThreatLevel: threatLevel,
+					RiskScore:   riskScore,
 					SourceIP:    clientIP,
-					Country:     "Unknown",
+					Country:     "Unknown", // TODO: Get from threat intelligence
 					AttackType:  "blocked_by_allowlist",
 					Path:        r.URL.Path,
 					Method:      r.Method,
@@ -225,35 +277,26 @@ func main() {
 		result := detectionEngine.CheckLocalRules(r, appID, cfg.Detection.SkipBodyCheckOnWhitelist)
 		if result != nil && result.IsAttack {
 			log.Printf("[STAGE1] app_id=%s | Attack detected: %s", appID, result.AttackType)
-			// In onboarding mode, auto-whitelist this path instead of blocking
-			if modeHandler.IsOnboardingMode() {
-				log.Printf("[ONBOARDING] app_id=%s | Auto-whitelisting path: %s %s", appID, r.Method, r.URL.Path)
-				modeHandler.HandleOnboardingRequest(r.Method, r.URL.Path, appID)
-				resp, err := forwardRequest(r, cfg, appID)
-				if err != nil {
-					http.Error(w, "Bad Gateway", http.StatusBadGateway)
-					return
-				}
-				defer resp.Body.Close()
-				copyResponse(w, resp)
-				return
-			}
 
-			// Normal/Learning mode: return honeypot
+			// Calculate risk score and threat level from confidence
+			riskScore := getRiskScoreFromConfidence(result.Confidence)
+			threatLevel := calculateThreatLevel(riskScore, cfg)
+
+			// Normal/Detection mode: return honeypot
 			logging.Attack(clientIP, r.Method, r.URL.Path, result.AttackType, "Stage 1: Local Rules")
 			db.StoreAttackInstance(appID, 0, clientIP, "", r.URL.Path, r.Method)
 
 			// Enqueue threat intelligence enrichment
 			go tiManager.EnqueueEnrichment(appID, clientIP)
 
-			// Send notifications
+			// Send notifications with dynamic values
 			go func() {
 				notificationManager.Send(&notifications.Notification{
 					AppID:       appID,
-					ThreatLevel: "MEDIUM",
-					RiskScore:   50,
+					ThreatLevel: threatLevel,
+					RiskScore:   riskScore,
 					SourceIP:    clientIP,
-					Country:     "Unknown",
+					Country:     "Unknown", // TODO: Get from threat intelligence
 					AttackType:  result.AttackType,
 					Path:        r.URL.Path,
 					Method:      r.Method,
@@ -287,35 +330,26 @@ func main() {
 		result = detectionEngine.CheckDatabasePatterns(r, appID, cfg.Detection.SkipBodyCheckOnWhitelist)
 		if result != nil && result.IsAttack {
 			log.Printf("[STAGE2] app_id=%s | Attack detected: %s", appID, result.AttackType)
-			// In onboarding mode, auto-whitelist this path instead of blocking
-			if modeHandler.IsOnboardingMode() {
-				log.Printf("[ONBOARDING] app_id=%s | Auto-whitelisting path: %s %s", appID, r.Method, r.URL.Path)
-				modeHandler.HandleOnboardingRequest(r.Method, r.URL.Path, appID)
-				resp, err := forwardRequest(r, cfg, appID)
-				if err != nil {
-					http.Error(w, "Bad Gateway", http.StatusBadGateway)
-					return
-				}
-				defer resp.Body.Close()
-				copyResponse(w, resp)
-				return
-			}
 
-			// Normal/Learning mode: return honeypot
+			// Calculate risk score and threat level from confidence
+			riskScore := getRiskScoreFromConfidence(result.Confidence)
+			threatLevel := calculateThreatLevel(riskScore, cfg)
+
+			// Normal/Detection mode: return honeypot
 			logging.Attack(clientIP, r.Method, r.URL.Path, result.AttackType, "Stage 2: Database Patterns")
 			db.StoreAttackInstance(appID, 0, clientIP, "", r.URL.Path, r.Method)
 
 			// Enqueue threat intelligence enrichment
 			go tiManager.EnqueueEnrichment(appID, clientIP)
 
-			// Send notifications
+			// Send notifications with dynamic values
 			go func() {
 				notificationManager.Send(&notifications.Notification{
 					AppID:       appID,
-					ThreatLevel: "MEDIUM",
-					RiskScore:   50,
+					ThreatLevel: threatLevel,
+					RiskScore:   riskScore,
 					SourceIP:    clientIP,
-					Country:     "Unknown",
+					Country:     "Unknown", // TODO: Get from threat intelligence
 					AttackType:  result.AttackType,
 					Path:        r.URL.Path,
 					Method:      r.Method,
@@ -364,35 +398,26 @@ func main() {
 			result = detectionEngine.CheckLLMAnalysis(r, appID, cfg.Detection.SkipBodyCheckOnWhitelist)
 			if result != nil && result.IsAttack {
 				log.Printf("[STAGE4] app_id=%s | Attack detected: %s", appID, result.AttackType)
-				// In onboarding mode, auto-whitelist this path instead of blocking
-				if modeHandler.IsOnboardingMode() {
-					log.Printf("[ONBOARDING] app_id=%s | Auto-whitelisting path: %s %s", appID, r.Method, r.URL.Path)
-					modeHandler.HandleOnboardingRequest(r.Method, r.URL.Path, appID)
-					resp, err := forwardRequest(r, cfg, appID)
-					if err != nil {
-						http.Error(w, "Bad Gateway", http.StatusBadGateway)
-						return
-					}
-					defer resp.Body.Close()
-					copyResponse(w, resp)
-					return
-				}
 
-				// Normal/Learning mode: return honeypot
+				// Calculate risk score and threat level from LLM confidence
+				riskScore := getRiskScoreFromConfidence(result.Confidence)
+				threatLevel := calculateThreatLevel(riskScore, cfg)
+
+				// Normal/Detection mode: return honeypot
 				logging.Attack(clientIP, r.Method, r.URL.Path, result.AttackType, "Stage 4: LLM Analysis")
 				db.StoreAttackInstance(appID, 0, clientIP, "", r.URL.Path, r.Method)
 
 				// Enqueue threat intelligence enrichment
 				go tiManager.EnqueueEnrichment(appID, clientIP)
 
-				// Send notifications
+				// Send notifications with dynamic values
 				go func() {
 					notificationManager.Send(&notifications.Notification{
 						AppID:       appID,
-						ThreatLevel: "MEDIUM",
-						RiskScore:   50,
+						ThreatLevel: threatLevel,
+						RiskScore:   riskScore,
 						SourceIP:    clientIP,
-						Country:     "Unknown",
+						Country:     "Unknown", // TODO: Get from threat intelligence
 						AttackType:  result.AttackType,
 						Path:        r.URL.Path,
 						Method:      r.Method,
@@ -411,6 +436,10 @@ func main() {
 					&cfg.PayloadManagement,
 					llmManager,
 				)
+				if cfg.System.Debug {
+					log.Printf("[DEBUG STAGE4] payloadResp=%+v, err=%v", payloadResp, err)
+				}
+
 				if err != nil || payloadResp == nil {
 					w.WriteHeader(http.StatusInternalServerError)
 					w.Write([]byte(`{"error": "Internal server error"}`))
@@ -452,11 +481,36 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	<-sigChan
 
-	fmt.Println("\n⏹️  Shutting down gracefully...")
+	log.Println("\n⏹️  Shutting down gracefully...")
 	if err := server.Shutdown(context.Background()); err != nil {
 		log.Printf("Shutdown error: %v", err)
 	}
-	fmt.Println("✓ Server stopped")
+	log.Println("✓ Server stopped")
+}
+
+// ============================================================
+// HELPER FUNCTIONS
+// ============================================================
+
+// calculateThreatLevel determines threat level based on risk score and config thresholds
+func calculateThreatLevel(riskScore int, cfg *config.Config) string {
+	thresholds := cfg.ThreatIntelligence.ThreatLevelThresholds
+	
+	switch {
+	case riskScore >= thresholds.Critical:
+		return "CRITICAL"
+	case riskScore >= thresholds.High:
+		return "HIGH"
+	case riskScore >= thresholds.Medium:
+		return "MEDIUM"
+	default:
+		return "LOW"
+	}
+}
+
+// getRiskScoreFromConfidence converts confidence (0.0-1.0) to risk score (0-100)
+func getRiskScoreFromConfidence(confidence float64) int {
+	return int(confidence * 100)
 }
 
 // extractAppID extracts app_id from request header or uses fallback

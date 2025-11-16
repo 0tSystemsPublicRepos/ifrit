@@ -2,120 +2,87 @@
   "server": {
     "listen_addr": ":8080",
     "api_listen_addr": ":8443",
+    "proxy_target": "http://localhost:80",
     "multi_app_mode": false,
     "app_id_header": "X-App-ID",
     "app_id_fallback": "default",
-    "proxy_target": "http://localhost:80",
-    "tls": {
-      "enabled": true,
-      "cert_file": "/app/config/certs/server.crt",
-      "key_file": "/app/config/certs/server.key"
+    "apps": {
+      "app1": {
+        "proxy_target": "http://localhost:3000",
+        "enabled": true,
+        "description": "Main API"
+      },
+      "app2": {
+        "proxy_target": "http://localhost:4000",
+        "enabled": true,
+        "description": "Admin Panel"
+      }
     }
   },
+
   "database": {
     "type": "sqlite",
     "sqlite": {
       "path": "./data/ifrit.db",
       "journal_mode": "WAL",
       "synchronous": "NORMAL"
-    },
-    "mysql": {
-      "host": "localhost",
-      "port": 3306,
-      "username": "ifrit_user",
-      "password": "${DB_PASSWORD}",
-      "database": "ifrit",
-      "max_connections": 20,
-      "ssl": false
-    },
-    "postgresql": {
-      "host": "localhost",
-      "port": 5432,
-      "username": "ifrit_user",
-      "password": "${DB_PASSWORD}",
-      "database": "ifrit",
-      "ssl_mode": "disable",
-      "max_connections": 20
-    },
-    "connection_pool": {
-      "enabled": true,
-      "max_idle_connections": 5,
-      "max_open_connections": 25,
-      "connection_max_lifetime": "1h"
     }
   },
-  "apps": {
-    "app1": {
-      "proxy_target": "http://localhost:3000",
-      "enabled": true,
-      "description": "Main API"
-    },
-    "app2": {
-      "proxy_target": "http://localhost:4000",
-      "enabled": true,
-      "description": "Admin Panel"
+
+  "system": {
+    "home_dir": "./",
+    "log_dir": "./logs",
+    "log_level": "info",
+    "debug": false,
+    "log_rotation": {
+      "max_size_mb": 1,
+      "max_backups": 3,
+      "max_age_days": 30
     }
   },
-  "api": {
-    "listen_addr": ":8443",
-    "authentication": {
-      "enabled": true,
-      "token_header": "X-API-Token",
-      "require_auth": true,
-      "token_expiry_days": 90
-    },
-    "rate_limiting": {
-      "enabled": true,
-      "requests_per_minute": 100
-    }
-  },
-  "dashboard": {
-    "enabled": true,
-    "listen_addr": ":5601",
-    "authentication": {
-      "enabled": true,
-      "token_header": "X-Dashboard-Token"
-    }
-  },
+
   "llm": {
     "primary": "claude",
     "claude": {
-      "api_key": "${CLAUDE_API_KEY}",
+      "api_key": "sk-ant-PUT_YOUR_API_KEY_HERE",
       "model": "claude-3-5-haiku-20241022"
     },
-    "gpt": {
-      "api_key": "${OPENAI_API_KEY}",
-      "model": "gpt-4o-mini"
+    "gemini": {
+      "api_key": "PUT_YOUR_GEMINI_KEY_HERE",
+      "model": "gemini-2.5-flash"
     }
   },
+
   "detection": {
     "mode": "detection",
-    "enable_local_rules": true,
-    "enable_llm": true,
+    "enable_llm": false,
     "llm_only_on": ["GET", "POST", "PUT", "DELETE"],
+    "enable_local_rules": true,
+    "enable_db_patterns": true,
     "whitelist_ips": [],
     "whitelist_paths": [],
-    "skip_body_check_on_whitelist": true
+    "skip_body_check_on_whitelist": false
   },
+
+  "anonymization": {
+    "enabled": false,
+    "strategy": "hybrid",
+    "store_original": true,
+    "sensitive_headers": ["Authorization", "Cookie", "X-API-Key", "X-Auth-Token"]
+  },
+
   "execution_mode": {
     "mode": "detection",
     "onboarding_auto_whitelist": true,
     "onboarding_duration_days": 7,
     "onboarding_log_file": "./logs/onboarding_traffic.log"
   },
-  "anonymization": {
-    "enabled": true,
-    "strategy": "hybrid",
-    "store_original": true,
-    "sensitive_headers": ["Authorization", "Cookie", "X-API-Key", "X-Auth-Token"]
-  },
+
   "payload_management": {
-    "enable_intel_collection": true,
-    "intel_collection_payload_id": 1,
-    "cache_llm_payloads_to_db": true,
-    "generate_dynamic_payload": true,
-    "dynamic_llm_cache_ttl": 86400,
     "use_db_payloads": true,
+    "generate_dynamic_payload": false,
+    "cache_llm_payloads_to_db": true,
+    "intel_collection_payload_id": 1,
     "default_responses": {
       "reconnaissance": {
         "content": {"error": "Not found"},
@@ -143,37 +110,32 @@
       }
     }
   },
-  "system": {
-    "home_dir": "./",
-    "log_dir": "./logs",
-    "log_level": "info",
-    "debug": false
-  },
+
   "threat_intelligence": {
-    "enabled": true,
+    "enabled": false,
     "cache_ttl_hours": 24,
     "enrichment_workers": 3,
     "apis": {
       "abuseipdb": {
-        "enabled": true,
-        "api_key": "${ABUSEIPDB_API_KEY}",
+        "enabled": false,
+        "api_key": "PUT_YOUR_API_KEY_HERE",
         "timeout_seconds": 10
       },
       "virustotal": {
-        "enabled": true,
-        "api_key": "${VIRUSTOTAL_API_KEY}",
+        "enabled": false,
+        "api_key": "PUT_YOUR_API_KEY_HERE",
         "timeout_seconds": 10
       },
       "ipinfo": {
-        "enabled": true,
-        "api_key": "${IPINFO_API_KEY}",
+        "enabled": false,
+        "api_key": "PUT_YOUR_API_KEY_HERE",
         "timeout_seconds": 10
       }
     },
     "risk_score_weights": {
-      "abuseipdb_score": 0.4,
-      "virustotal_detections": 0.35,
-      "ipinfo_risk": 0.25
+      "abuseipdb_weight": 0.4,
+      "virustotal_weight": 0.35,
+      "ipinfo_weight": 0.25
     },
     "threat_level_thresholds": {
       "critical": 80,
@@ -182,16 +144,18 @@
       "low": 0
     }
   },
+
   "notifications": {
-    "enabled": true,
+    "enabled": false,
     "providers": {
       "email": {
         "enabled": false,
-        "smtp_host": "smtp.gmail.com",
-        "smtp_port": 587,
-        "smtp_username": "${SMTP_USERNAME}",
-        "smtp_password": "${SMTP_PASSWORD}",
-        "from_address": "alerts@ifrit.local"
+        "smtp_host": "CHANGE_THIS",
+        "smtp_port": 2525,
+        "smtp_user": "CHANGE_THIS",
+        "smtp_password": "CHANGE_THIS",
+        "from_address": "CHANGE_THIS",
+        "to_addresses": ["CHANGE_THIS"]
       },
       "slack": {
         "enabled": false,
@@ -199,10 +163,16 @@
       },
       "twilio": {
         "enabled": false,
-        "account_sid": "${TWILIO_ACCOUNT_SID}",
-        "auth_token": "${TWILIO_AUTH_TOKEN}",
-        "from_number": "${TWILIO_FROM_NUMBER}",
-        "to_number": "${TWILIO_TO_NUMBER}"
+        "account_sid": "CHANGE_THIS",
+        "auth_token": "CHANGE_THIS",
+        "from_number": "+1 xxx xxx xxxx",
+        "to_numbers": ["+1 xxx xxx xxxx"]
+      },
+      "webhook": {
+        "enabled": false,
+        "url": "WEBHOOK_ADDRESS_ENDPOINT_HERE",
+        "retry_count": 3,
+        "retry_delay_seconds": 5
       }
     },
     "rules": {
@@ -212,10 +182,29 @@
       "alert_on_low": false
     }
   },
-  "webhooks": {
+
+  "dashboard": {
     "enabled": true,
-    "retry_count": 3,
-    "retry_delay_seconds": 5,
-    "timeout_seconds": 10
+    "listen_addr": ":5601",
+    "authentication": {
+      "enabled": true,
+      "token_header": "X-Dashboard-Token"
+    },
+    "refresh_interval_seconds": 5,
+    "requests_per_minute": 100
+  },
+
+  "api": {
+    "enabled": true,
+    "base_path": "/api",
+    "version": "v1",
+    "authentication": {
+      "enabled": true,
+      "token_header": "X-API-Token"
+    },
+    "rate_limiting": {
+      "enabled": true,
+      "requests_per_minute": 100
+    }
   }
 }

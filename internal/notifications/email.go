@@ -2,11 +2,11 @@ package notifications
 
 import (
 	"fmt"
-	"log"
 	"net/smtp"
 	"strings"
 
 	"github.com/0tSystemsPublicRepos/ifrit/internal/config"
+	"github.com/0tSystemsPublicRepos/ifrit/internal/logging"
 )
 
 type EmailProvider struct {
@@ -44,18 +44,18 @@ func (ep *EmailProvider) Send(notification *Notification) error {
 	}
 
 	if len(recipients) == 0 {
-		log.Printf("[EMAIL] No recipients configured")
+		logging.Error("[EMAIL] No recipients configured")
 		return fmt.Errorf("no email recipients configured")
 	}
 
 	// Send email
 	err := ep.sendEmail(recipients, subject, body)
 	if err != nil {
-		log.Printf("[EMAIL] ✗ Failed to send email: %v", err)
+		logging.Error("[EMAIL] ✗ Failed to send email: %v", err)
 		return err
 	}
 
-	log.Printf("[EMAIL] ✓ Email sent successfully to %d recipient(s) (threat: %s/%d)", len(recipients), notification.ThreatLevel, notification.RiskScore)
+	logging.Info("[EMAIL] ✓ Email sent successfully to %d recipient(s) (threat: %s/%d)", len(recipients), notification.ThreatLevel, notification.RiskScore)
 	return nil
 }
 

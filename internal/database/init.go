@@ -2,9 +2,9 @@ package database
 
 import (
 	"database/sql"
-	"log"
 
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/0tSystemsPublicRepos/ifrit/internal/logging"
 )
 
 // InitializeDatabase creates tables and runs migrations
@@ -31,11 +31,11 @@ func InitializeDatabase(dbPath string) (*SQLiteDB, error) {
 
 	// Run migrations (including seed data)
 	if err := RunMigrations(db); err != nil {
-		log.Printf("Warning: Migrations failed: %v", err)
+		logging.Error("Warning: Migrations failed: %v", err)
 		// Don't fail on migration errors
 	}
 
-	log.Println("Database initialized successfully")
+	logging.Info("Database initialized successfully")
 
 	// Return wrapped SQLiteDB
 	return &SQLiteDB{db: db}, nil
@@ -43,7 +43,7 @@ func InitializeDatabase(dbPath string) (*SQLiteDB, error) {
 
 // createAllTables creates all required database tables
 func createAllTables(db *sql.DB) error {
-	log.Println("Creating database tables...")
+	logging.Info("Creating database tables...")
 
 	tables := []struct {
 		name   string
@@ -328,9 +328,9 @@ func createAllTables(db *sql.DB) error {
 	}
 
 	for _, table := range tables {
-		log.Printf("Creating table: %s", table.name)
+		logging.Info("Creating table: %s", table.name)
 		if _, err := db.Exec(table.schema); err != nil {
-			log.Printf("Error creating table %s: %v", table.name, err)
+			logging.Error("Error creating table %s: %v", table.name, err)
 			return err
 		}
 	}
@@ -340,13 +340,13 @@ func createAllTables(db *sql.DB) error {
 		return err
 	}
 
-	log.Println("All tables and indexes created successfully")
+	logging.Info("All tables and indexes created successfully")
 	return nil
 }
 
 // createIndexes creates all database indexes
 func createIndexes(db *sql.DB) error {
-	log.Println("Creating database indexes...")
+	logging.Info("Creating database indexes...")
 
 	indexes := []struct {
 		name  string
@@ -387,13 +387,13 @@ func createIndexes(db *sql.DB) error {
 	}
 
 	for _, idx := range indexes {
-		log.Printf("Creating index: %s", idx.name)
+		logging.Debug("Creating index: %s", idx.name)
 		if _, err := db.Exec(idx.query); err != nil {
-			log.Printf("Error creating index %s: %v", idx.name, err)
+			logging.Error("Error creating index %s: %v", idx.name, err)
 			// Don't fail on index errors, they might already exist
 		}
 	}
 
-	log.Println("All indexes created successfully")
+	logging.Info("All indexes created successfully")
 	return nil
 }

@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 
 	"github.com/0tSystemsPublicRepos/ifrit/internal/anonymization"
+	"github.com/0tSystemsPublicRepos/ifrit/internal/logging"
 )
 
 type ClaudeProvider struct {
@@ -117,7 +117,7 @@ Be strict. Return true only for clear attacks.`,
 
 	var claudeResp ClaudeResponse
 	if err := json.Unmarshal(body, &claudeResp); err != nil {
-		log.Printf("Failed to parse Claude response: %v", err)
+		logging.Error("Failed to parse Claude response: %v", err)
 		return nil, err
 	}
 
@@ -126,11 +126,11 @@ Be strict. Return true only for clear attacks.`,
 	}
 
  	// Parse the JSON response
-var result AnalysisResult
-if err := json.Unmarshal([]byte(claudeResp.Content[0].Text), &result); err != nil {
-    log.Printf("Failed to parse Claude analysis: %v. Raw: %s", err, claudeResp.Content[0].Text)
-    return nil, err
-}
+	var result AnalysisResult
+	if err := json.Unmarshal([]byte(claudeResp.Content[0].Text), &result); err != nil {
+		logging.Error("Failed to parse Claude analysis: %v. Raw: %s", err, claudeResp.Content[0].Text)
+		return nil, err
+	}
 
 	
 	return &result, nil
@@ -210,7 +210,7 @@ func (cp *ClaudeProvider) GeneratePayloadWithIntel(attackType string, intelTempl
 	if templateType, ok := selectedTemplate["template_type"].(string); ok && templateType == "javascript" {
 		if content, ok := selectedTemplate["content"].(string); ok {
 			enhancedPayload["_tracking"] = content
-			log.Printf("[INTEL] Injected JavaScript tracking into payload for attack type: %s", attackType)
+			logging.Info("[INTEL] Injected JavaScript tracking into payload for attack type: %s", attackType)
 		}
 	}
 

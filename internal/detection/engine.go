@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	"github.com/0tSystemsPublicRepos/ifrit/internal/anonymization"
 	"github.com/0tSystemsPublicRepos/ifrit/internal/database"
 	"github.com/0tSystemsPublicRepos/ifrit/internal/llm"
+	"github.com/0tSystemsPublicRepos/ifrit/internal/logging"
 )
 
 type DetectionEngine struct {
@@ -158,13 +158,13 @@ func (de *DetectionEngine) CheckLocalRules(r *http.Request, appID string, skipBo
 		if rule.Pattern.MatchString(fullRequest) {
 			// Check keyword exceptions before returning attack
 			if de.shouldSkipKeywordCheck(r, appID) && skipBodyCheckOnWhitelist {
-				log.Printf("[KEYWORD_SKIP] app_id=%s | Skipping %s due to exception (skipBodyCheck=%v)", appID, rule.Name, skipBodyCheckOnWhitelist)
+				logging.Debug("[KEYWORD_SKIP] app_id=%s | Skipping %s due to exception (skipBodyCheck=%v)", appID, rule.Name, skipBodyCheckOnWhitelist)
 				continue
 			}
 
 			// If skipBodyCheck is false, continue analysis even if path is whitelisted
 			if de.shouldSkipKeywordCheck(r, appID) && !skipBodyCheckOnWhitelist {
-				log.Printf("[KEYWORD_CHECK] app_id=%s | Path whitelisted but checking %s (skipBodyCheck=false)", appID, rule.Name)
+				logging.Debug("[KEYWORD_CHECK] app_id=%s | Path whitelisted but checking %s (skipBodyCheck=false)", appID, rule.Name)
 			}
 
 			signature := de.GenerateSignature(r)
@@ -202,13 +202,13 @@ func (de *DetectionEngine) CheckDatabasePatterns(r *http.Request, appID string, 
 
 		// Check if should skip due to keyword exception
 		if de.shouldSkipKeywordCheck(r, appID) && skipBodyCheckOnWhitelist {
-			log.Printf("[KEYWORD_SKIP] app_id=%s | Skipping pattern check due to exception (skipBodyCheck=%v)", appID, skipBodyCheckOnWhitelist)
+			logging.Debug("[KEYWORD_SKIP] app_id=%s | Skipping pattern check due to exception (skipBodyCheck=%v)", appID, skipBodyCheckOnWhitelist)
 			continue
 		}
 
 		// If skipBodyCheck is false, continue analysis even if path is whitelisted
 		if de.shouldSkipKeywordCheck(r, appID) && !skipBodyCheckOnWhitelist {
-			log.Printf("[KEYWORD_CHECK] app_id=%s | Path whitelisted but checking pattern (skipBodyCheck=false)", appID)
+			logging.Debug("[KEYWORD_CHECK] app_id=%s | Path whitelisted but checking pattern (skipBodyCheck=false)", appID)
 		}
 
 		// Check path
@@ -234,7 +234,7 @@ func (de *DetectionEngine) CheckDatabasePatterns(r *http.Request, appID string, 
 func (de *DetectionEngine) CheckLegitimateCache(r *http.Request, appID string, skipBodyCheckOnWhitelist bool) (bool, error) {
 	// If path is whitelisted and skipBodyCheck is true, consider it legitimate
 	if de.shouldSkipKeywordCheck(r, appID) && skipBodyCheckOnWhitelist {
-		log.Printf("[STAGE3] ✓ CACHE HIT: app_id=%s | Request is legitimate (whitelisted path)", appID)
+		logging.Debug("[STAGE3] ✓ CACHE HIT: app_id=%s | Request is legitimate (whitelisted path)", appID)
 		return true, nil
 	}
 
@@ -243,21 +243,21 @@ func (de *DetectionEngine) CheckLegitimateCache(r *http.Request, appID string, s
 	bodySig := de.generateBodySignature(r)
 	headersSig := de.generateHeadersSignature(r)
 
-	log.Printf("[STAGE3] app_id=%s | Checking legitimate cache: pathSig=%s bodySig=%s", appID, pathSig, bodySig)
+	logging.Debug("[STAGE3] app_id=%s | Checking legitimate cache: pathSig=%s bodySig=%s", appID, pathSig, bodySig)
 
 	// Check if exists in legitimate_requests table
 	exists, err := de.db.GetLegitimateRequest(appID, pathSig, bodySig, headersSig)
 	if err != nil {
-		log.Printf("[STAGE3] Error checking legitimate cache: %v", err)
+		logging.Error("[STAGE3] Error checking legitimate cache: %v", err)
 		return false, err
 	}
 
 	if exists {
-		log.Printf("[STAGE3] ✓ CACHE HIT: app_id=%s | Request is legitimate (cached)", appID)
+		logging.Debug("[STAGE3] ✓ CACHE HIT: app_id=%s | Request is legitimate (cached)", appID)
 		return true, nil
 	}
 
-	log.Printf("[STAGE3] ✗ CACHE MISS: app_id=%s | Request not in cache, need LLM analysis", appID)
+	logging.Debug("[STAGE3] ✗ CACHE MISS: app_id=%s | Request not in cache, need LLM analysis", appID)
 	return false, nil
 }
 
@@ -269,11 +269,11 @@ func (de *DetectionEngine) StoreLegitimateRequest(r *http.Request, appID string)
 
 	err := de.db.StoreLegitimateRequest(appID, r.Method, r.URL.Path, pathSig, bodySig, headersSig)
 	if err != nil {
-		log.Printf("[STAGE3] Error storing legitimate request: %v", err)
+		logging.Error("[STAGE3] Error storing legitimate request: %v", err)
 		return err
 	}
 
-	log.Printf("[STAGE3] ✓ Stored legitimate request in cache: app_id=%s", appID)
+	logging.Debug("[STAGE3] ✓ Stored legitimate request in cache: app_id=%s", appID)
 	return nil
 }
 
@@ -285,13 +285,13 @@ func (de *DetectionEngine) CheckLLMAnalysis(r *http.Request, appID string, skipB
 
 	// Check keyword exceptions before calling LLM
 	if de.shouldSkipKeywordCheck(r, appID) && skipBodyCheckOnWhitelist {
-		log.Printf("[KEYWORD_SKIP] app_id=%s | Skipping LLM analysis due to exception (skipBodyCheck=%v)", appID, skipBodyCheckOnWhitelist)
+		logging.Debug("[KEYWORD_SKIP] app_id=%s | Skipping LLM analysis due to exception (skipBodyCheck=%v)", appID, skipBodyCheckOnWhitelist)
 		return nil
 	}
 
 	// If skipBodyCheck is false, continue analysis even if path is whitelisted
 	if de.shouldSkipKeywordCheck(r, appID) && !skipBodyCheckOnWhitelist {
-		log.Printf("[KEYWORD_CHECK] app_id=%s | Path whitelisted but checking body/headers (skipBodyCheck=false)", appID)
+		logging.Debug("[KEYWORD_CHECK] app_id=%s | Path whitelisted but checking body/headers (skipBodyCheck=false)", appID)
 	}
 
 	// Extract request data for LLM
@@ -300,7 +300,7 @@ func (de *DetectionEngine) CheckLLMAnalysis(r *http.Request, appID string, skipB
 	// Call LLM
 	result, err := de.llmManager.AnalyzeRequest(requestData)
 	if err != nil {
-		fmt.Printf("[LLM ERROR] app_id=%s | Analysis error: %v\n", appID, err)
+		logging.Error("[LLM ERROR] app_id=%s | Analysis error: %v", appID, err)
 		return nil
 	}
 
@@ -351,7 +351,7 @@ func (de *DetectionEngine) shouldSkipKeywordCheck(r *http.Request, appID string)
 		keyword := exc["keyword"].(string)
 
 		if excType == "path" && strings.Contains(r.URL.Path, keyword) {
-			log.Printf("[KEYWORD_EXCEPTION] app_id=%s | Path contains exception keyword: %s", appID, keyword)
+			logging.Debug("[KEYWORD_EXCEPTION] app_id=%s | Path contains exception keyword: %s", appID, keyword)
 			return true
 		}
 	}
@@ -367,7 +367,7 @@ func (de *DetectionEngine) shouldSkipKeywordCheck(r *http.Request, appID string)
 			keyword := exc["keyword"].(string)
 
 			if excType == "body_field" && strings.Contains(bodyStr, keyword) {
-				log.Printf("[KEYWORD_EXCEPTION] app_id=%s | Body contains exception keyword: %s", appID, keyword)
+				logging.Debug("[KEYWORD_EXCEPTION] app_id=%s | Body contains exception keyword: %s", appID, keyword)
 				return true
 			}
 		}
@@ -382,7 +382,7 @@ func (de *DetectionEngine) shouldSkipKeywordCheck(r *http.Request, appID string)
 			for headerName, headerValues := range r.Header {
 				for _, headerValue := range headerValues {
 					if strings.Contains(headerName, keyword) || strings.Contains(headerValue, keyword) {
-						log.Printf("[KEYWORD_EXCEPTION] app_id=%s | Header contains exception keyword: %s", appID, keyword)
+						logging.Debug("[KEYWORD_EXCEPTION] app_id=%s | Header contains exception keyword: %s", appID, keyword)
 						return true
 					}
 				}

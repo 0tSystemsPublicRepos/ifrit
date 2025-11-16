@@ -2,7 +2,14 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/Version-0.2.0-green.svg)](CHANGELOG.md)
 
+
+<div align="center">
+  <img src="./docs/assets/logo-dark.png" alt="IFRIT Logo" width="400">
+</div>
+
+
 ---
+
 
 ## Overview
 
@@ -18,7 +25,7 @@ The proxy decision-making process follows a **four-stage pipeline**:
 4. **Stage 3: LLM Analysis** - AI: Is this a novel attack? → Generate Honeypot response tailored to this specific attack
 
 **Throughout this process:**
-- Sensitive data is anonymized before reaching local/external LLMs (currently supports Anthropic Claude)
+- Sensitive data is anonymized before reaching local/external LLMs (currently supports Anthropic Claude + Google Gemini)
 - Attack patterns are learned and stored for future reference
 - Attacker profiles are built based on behavior
 - Threats enriched with 3rd-party intelligence (risk scoring, geolocation, reputation)
@@ -38,7 +45,7 @@ Four-stage pipeline detects attacks without requiring infrastructure changes:
 - **Whitelist exceptions** - Critical paths bypass honeypot
 - **Local rules** - Instant pattern matching (no API calls)
 - **Database patterns** - Learned attacks cached locally (<10ms)
-- **LLM analysis** - Novel threats analyzed by Claude/GPT
+- **LLM analysis** - Novel threats analyzed by Claude/Gemini
 
 ### Threat Intelligence (NEW in v0.2.0)
 
@@ -95,7 +102,7 @@ Real-time dashboard at `http://localhost:8443/`:
 
 Each attack analyzed becomes a learned pattern:
 
-- First attack: Claude generates honeypot (~3 seconds)
+- First attack: Claude/Gemini generate honeypot (~3 seconds)
 - Subsequent attacks: Database cache (<10ms)
 - **Result: 90% cost reduction after learning phase**
 
@@ -133,7 +140,7 @@ See [DETECTION_MODES.md](docs/DETECTION_MODES.md) for detailed comparison.
 Intelligent honeypot response selection:
 
 - **Stage 1: Database** - Use learned payloads (cached)
-- **Stage 2: LLM** - Claude generates realistic responses
+- **Stage 2: LLM** - Claude/Gemini generates realistic responses
 - **Stage 3: Config** - Fallback to configured defaults
 - **Stage 4: Fallback** - Generic error if nothing matches
 
@@ -266,7 +273,7 @@ Incoming Request
 └─ Continue to Stage 3
     ↓
 [Stage 3] LLM Analysis (POST/PUT/DELETE only)
-├─ Claude/GPT confirms attack? → HONEYPOT ✓
+├─ Claude/Gemini confirms attack? → HONEYPOT ✓
 └─ Not an attack
     ↓
 [Threat Intelligence Enrichment]
@@ -295,7 +302,7 @@ Attack Detected (e.g., sql_injection)
     ↓
 [1] Database: Any stored payload? → Use it ✓
     ↓
-[2] LLM: Generate dynamic? → Claude creates response ✓
+[2] LLM: Generate dynamic? → Claude/Gemini create response ✓
     ↓
 [3] Config: Attack type in defaults? → Use it ✓
     ↓
@@ -305,13 +312,13 @@ Attack Detected (e.g., sql_injection)
 ### Learning Process
 ```
 Hour 1: 100 attacks, 40 unique types
-├─ Detect → 40 Claude calls → $0.12 cost
+├─ Detect → 40 Claude/Gemini calls → $0.12 cost
 ├─ Store patterns in DB
 ├─ Enrich with threat intel
 └─ Honeypot responses cached
 
 Hour 2: 100 attacks, same 40 types
-├─ Database pattern matches → 0 Claude calls
+├─ Database pattern matches → 0 Claude/Gemini calls
 ├─ Threat intel cached (24h) → 0 API calls
 ├─ Cached responses + intel used
 └─ $0.00 cost (100% savings!)
@@ -415,7 +422,7 @@ All configuration through JSON (`config/default.json`).
 cp config/default.json.example config/default.json
 
 # Add your API keys to config/default.json
-# - Claude API key (for LLM)
+# - Claude/Gemini API key (for LLM)
 # - AbuseIPDB key (for threat intel)
 # - VirusTotal key (for threat intel)
 # - IPInfo key (for threat intel)
@@ -425,8 +432,21 @@ cp config/default.json.example config/default.json
 
 # Build and run
 go build -o ifrit ./cmd/ifrit
-./ifrit
+./ifrit &
+
 ```
+
+**Note:** The database (`./data/ifrit.db`) is created automatically on first run based on the path in `config/default.json`.
+
+## IFRIT CLI Management Tool
+
+Build the CLI in the project root (same directory as `config/` and `data/`):
+
+```bash
+go build -o ifrit-cli ./cmd/ifrit-cli
+./ifrit-cli --help
+```
+
 
 ### Detection Modes
 
@@ -632,6 +652,6 @@ IFRIT Proxy is licensed under [Apache License 2.0](LICENSE). For commercial supp
 
 ## Acknowledgments
 
-Built with Go, SQLite, Claude AI, and the security community's collective threat intelligence.
+Built with Go, SQLite, Anthropic/Google AI, and the security community's collective threat intelligence.
 
 **v0.2.0 Contributors:** 0tSystems Security Team

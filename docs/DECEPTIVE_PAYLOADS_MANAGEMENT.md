@@ -25,7 +25,7 @@ Stage 1: Database Patterns?
     └─ Learned pattern exists? → Return stored payload ✓
     
 Stage 2: LLM Generation? (if enabled)
-    └─ Generate realistic response via Claude ✓
+    └─ Generate realistic response via Claude/Gemini ✓
     
 Stage 3: Config Defaults?
     └─ Attack type defined in config? → Return it ✓
@@ -59,22 +59,22 @@ Request 1: POST /api/users with "1 OR 1=1"
 Request 2: POST /api/users with same SQL injection
   → Database match found instantly
   → Returns same payload from cache
-  → No Claude API call (cost saved!)
+  → No Claude/Gemini API call (cost saved!)
 ```
 
 ### Stage 2: LLM Dynamic Generation
 
-When `generate_dynamic_payload: true`, Claude generates realistic responses for new attack types.
+When `generate_dynamic_payload: true`, Claude/Gemini generate realistic responses for new attack types.
 
 **How it works:**
 - Attack doesn't match database pattern
 - Config check: `generate_dynamic_payload`
-- If enabled: Call Claude with attack type
-- Claude generates fake response (SQL records, error message, etc.)
+- If enabled: Call Claude/Gemini with attack type
+- Claude/Gemini generate fake response (SQL records, error message, etc.)
 - Response cached in database for future use
 
 **Characteristics:**
-- ~3 seconds per generation (Claude API call)
+- ~3 seconds per generation (Claude/Gemini API call)
 - Creates realistic, contextual responses
 - Automatically cached after first use
 - Can be disabled for instant responses (but less realistic)
@@ -239,8 +239,8 @@ CREATE TABLE attack_patterns (
 **Key column: `payload_template`**
 - Contains the JSON response to send
 - Populated by:
-  1. Claude (if dynamic generation enabled)
-  2. Config defaults (if no Claude generation)
+  1. Claude/Gemini (if dynamic generation enabled)
+  2. Config defaults (if no Claude/Gemini generation)
   3. Manual CLI insertion (advanced users)
 
 ---
@@ -265,7 +265,7 @@ Check database for pattern match
 ### Cost Optimization
 
 **Without caching:**
-- 100 attacks = 100 Claude API calls
+- 100 attacks = 100 Claude/Gemini API calls
 - Cost: ~$0.10
 
 **With caching:**
@@ -380,11 +380,11 @@ Delete a learned pattern:
 
 ### Known Constraints
 
-- **Response time:** First dynamic generation ~3 seconds (Claude API)
+- **Response time:** First dynamic generation ~3 seconds (Claude/Gemini API)
 - **Cache size:** Limited to 1000 payloads in memory
 - **Customization:** Limited to config.json or manual CLI/database edits
 - **No payload editing:** Can only delete and re-add (not update)
-- **LLM context:** Claude sees anonymized request data only
+- **LLM context:** Claude/Gemini sees anonymized request data only
 
 ---
 
@@ -399,13 +399,13 @@ Delete a learned pattern:
 - Email addresses
 - Passwords
 
-**Claude receives only:**
+**Claude/Gemini receive only:**
 - HTTP method and path
 - Attack pattern/signature
 - Attack type (detected)
 - Content-Type, User-Agent
 
-**Unless configured otherwise, Claude does NOT receive:**
+**Unless configured otherwise, Claude/Gemini does NOT receive:**
 - Credentials
 - Personal information
 - Real user data
@@ -446,7 +446,7 @@ Delete a learned pattern:
 **Cause:** LLM manager not configured or API key missing
 
 **Solution:**
-1. Verify Claude API key in config
+1. Verify Claude/Gemini API key in config
 2. Check `generate_dynamic_payload: true`
 3. Verify LLM manager initialized in logs
 4. Test API key manually
@@ -455,7 +455,7 @@ Delete a learned pattern:
 
 **Symptoms:** First request ~3 seconds, subsequent <10ms
 
-**Expected:** This is normal! First request triggers Claude generation, subsequent requests use cache.
+**Expected:** This is normal! First request triggers Claude/Gemini generation, subsequent requests use cache.
 
 **Solution:** If too slow, set `generate_dynamic_payload: false` to use config defaults only.
 

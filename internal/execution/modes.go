@@ -2,55 +2,34 @@ package execution
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/0tSystemsPublicRepos/ifrit/internal/config"
 	"github.com/0tSystemsPublicRepos/ifrit/internal/database"
+	"github.com/0tSystemsPublicRepos/ifrit/internal/logging"
 )
 
 type ExecutionModeHandler struct {
-	mode   string
 	config *config.ExecutionModeConfig
 	db     *database.SQLiteDB
 }
 
 func NewExecutionModeHandler(cfg *config.ExecutionModeConfig, db *database.SQLiteDB) *ExecutionModeHandler {
 	return &ExecutionModeHandler{
-		mode:   cfg.Mode,
 		config: cfg,
 		db:     db,
 	}
 }
 
-// IsOnboardingMode returns true if in onboarding mode
-func (e *ExecutionModeHandler) IsOnboardingMode() bool {
-	return e.mode == "onboarding"
-}
-
-// IsNormalMode returns true if in normal mode
-func (e *ExecutionModeHandler) IsNormalMode() bool {
-	return e.mode == "normal"
-}
-
-// IsLearningMode returns true if in learning mode
-func (e *ExecutionModeHandler) IsLearningMode() bool {
-	return e.mode == "learning"
-}
-
 // HandleOnboardingRequest handles request in onboarding mode
-// If auto-whitelist is enabled, adds the request path to exceptions
+// Adds the request path to exceptions whitelist
 func (e *ExecutionModeHandler) HandleOnboardingRequest(method, path, appID string) error {
-	log.Printf("[ONBOARDING] app_id=%s | Processing: %s %s", appID, method, path)
-	if !e.IsOnboardingMode() {
-		log.Printf("[ONBOARDING] app_id=%s | Not in onboarding mode, skipping", appID)
-		return nil
-	}
+	logging.Info("[ONBOARDING] app_id=%s | Processing: %s %s", appID, method, path)
 
 	if !e.config.OnboardingAutoWhitelist {
-		log.Printf("[ONBOARDING] app_id=%s | Auto-whitelist disabled, skipping", appID)
+		logging.Info("[ONBOARDING] app_id=%s | Auto-whitelist disabled, skipping", appID)
 		return nil
 	}
 
@@ -58,7 +37,7 @@ func (e *ExecutionModeHandler) HandleOnboardingRequest(method, path, appID strin
 	// Using "*" for IP to match any IP for that path
 	err := e.addPathToExceptions(appID, method, path)
 	if err != nil {
-		log.Printf("Error adding path to exceptions for app_id=%s: %v", appID, err)
+		logging.Error("Error adding path to exceptions for app_id=%s: %v", appID, err)
 		return err
 	}
 
@@ -80,11 +59,11 @@ func (e *ExecutionModeHandler) addPathToExceptions(appID, method, path string) e
 
 	err := e.db.AddException(appID, "*", path, reason)
 	if err != nil {
-		log.Printf("Error adding path to exceptions for app_id=%s: %v", appID, err)
+		logging.Error("Error adding path to exceptions for app_id=%s: %v", appID, err)
 		return err
 	}
 
-	log.Printf("[ONBOARDING] app_id=%s | Auto-whitelisted path in DB: %s %s", appID, method, path)
+	logging.Info("[ONBOARDING] app_id=%s | Auto-whitelisted path in DB: %s %s", appID, method, path)
 	return nil
 }
 
@@ -105,7 +84,7 @@ func (e *ExecutionModeHandler) logOnboardingTraffic(appID, method, path string) 
 	// Open file in append mode
 	file, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
-		log.Printf("Error opening onboarding log for app_id=%s: %v", appID, err)
+		logging.Error("Error opening onboarding log for app_id=%s: %v", appID, err)
 		return
 	}
 	defer file.Close()
@@ -119,7 +98,6 @@ func (e *ExecutionModeHandler) logOnboardingTraffic(appID, method, path string) 
 // GetModeInfo returns information about current execution mode
 func (e *ExecutionModeHandler) GetModeInfo() map[string]interface{} {
 	return map[string]interface{}{
-		"mode":                      e.mode,
 		"onboarding_auto_whitelist": e.config.OnboardingAutoWhitelist,
 		"onboarding_duration_days":  e.config.OnboardingDurationDays,
 		"onboarding_log_file":       e.config.OnboardingLogFile,

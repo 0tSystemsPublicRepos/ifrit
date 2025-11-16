@@ -2,10 +2,11 @@ package anonymization
 
 import (
 	"fmt"
-	"log"
 	"net/http"
 	"regexp"
 	"strings"
+
+	"github.com/0tSystemsPublicRepos/ifrit/internal/logging"
 )
 
 type AnonymizationEngine struct {
@@ -67,7 +68,7 @@ func (ae *AnonymizationEngine) AnonymizeRequest(r *http.Request) *AnonymizationR
 		// Redact sensitive headers AND patterns
 		for _, header := range ae.sensitiveHeaders {
 			if r.Header.Get(header) != "" {
-				log.Printf("[ANON] Redacting header: %s", header)
+				logging.Debug("[ANON] Redacting header: %s", header)
 				anonymized = strings.ReplaceAll(
 					anonymized,
 					r.Header.Get(header),
@@ -79,7 +80,7 @@ func (ae *AnonymizationEngine) AnonymizeRequest(r *http.Request) *AnonymizationR
 		// Redact patterns in body/query string
 		for patternName, pattern := range ae.patterns {
 			if pattern.MatchString(anonymized) {
-				log.Printf("[ANON] Redacting pattern: %s", patternName)
+				logging.Debug("[ANON] Redacting pattern: %s", patternName)
 				anonymized = pattern.ReplaceAllString(
 					anonymized,
 					"[REDACTED_"+strings.ToUpper(patternName)+"]",
@@ -92,7 +93,7 @@ func (ae *AnonymizationEngine) AnonymizeRequest(r *http.Request) *AnonymizationR
 		// Only redact sensitive headers
 		for _, header := range ae.sensitiveHeaders {
 			if r.Header.Get(header) != "" {
-				log.Printf("[ANON] Redacting header: %s", header)
+				logging.Debug("[ANON] Redacting header: %s", header)
 				anonymized = strings.ReplaceAll(
 					anonymized,
 					r.Header.Get(header),
@@ -105,7 +106,7 @@ func (ae *AnonymizationEngine) AnonymizeRequest(r *http.Request) *AnonymizationR
 	result.AnonymizedRequest = anonymized
 
 	if result.RedactionCount > 0 {
-		log.Printf("[ANON] Anonymization complete: %d fields redacted", result.RedactionCount)
+		logging.Info("[ANON] Anonymization complete: %d fields redacted", result.RedactionCount)
 	}
 
 	return result
@@ -144,7 +145,7 @@ func (ae *AnonymizationEngine) AnonymizeRequestData(requestData map[string]strin
 		headerPattern := regexp.MustCompile(`(?i)` + regexp.QuoteMeta(header) + `:\s*[^;]*`)
 		matches := headerPattern.FindAllString(headersField, -1)
 		if len(matches) > 0 {
-			log.Printf("[ANON] Redacting sensitive header: %s (%d occurrences)", header, len(matches))
+			logging.Debug("[ANON] Redacting sensitive header: %s (%d occurrences)", header, len(matches))
 			headersField = headerPattern.ReplaceAllString(
 				headersField,
 				"[REDACTED_"+strings.ToUpper(strings.ReplaceAll(header, "-", "_"))+"]",
@@ -164,7 +165,7 @@ func (ae *AnonymizationEngine) AnonymizeRequestData(requestData map[string]strin
 		for patternName, pattern := range ae.patterns {
 			matches := pattern.FindAllString(anonymized, -1)
 			if len(matches) > 0 {
-				log.Printf("[ANON] Redacting pattern '%s': %d occurrences", patternName, len(matches))
+				logging.Debug("[ANON] Redacting pattern '%s': %d occurrences", patternName, len(matches))
 				anonymized = pattern.ReplaceAllString(
 					anonymized,
 					"[REDACTED_"+strings.ToUpper(patternName)+"]",
@@ -176,7 +177,7 @@ func (ae *AnonymizationEngine) AnonymizeRequestData(requestData map[string]strin
 
 	case "header-only":
 		// Only redact headers, not body patterns
-		log.Printf("[ANON] Using header-only strategy")
+		logging.Debug("[ANON] Using header-only strategy")
 	}
 
 	result.AnonymizedRequest = anonymized

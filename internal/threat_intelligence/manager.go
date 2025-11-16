@@ -1,12 +1,12 @@
 package threat_intelligence
 
 import (
-	"log"
 	"sync"
 	"time"
 
 	"github.com/0tSystemsPublicRepos/ifrit/internal/config"
 	"github.com/0tSystemsPublicRepos/ifrit/internal/database"
+	"github.com/0tSystemsPublicRepos/ifrit/internal/logging"
 )
 
 type Manager struct {
@@ -46,11 +46,11 @@ func NewManager(cfg *config.ThreatIntelligenceConfig, db *database.SQLiteDB) *Ma
 // Start starts the enrichment worker goroutines
 func (m *Manager) Start() {
 	if !m.config.Enabled {
-		log.Println("[THREAT_INTEL] Threat Intelligence disabled in config")
+		logging.Info("[THREAT_INTEL] Threat Intelligence disabled in config")
 		return
 	}
 
-	log.Printf("[THREAT_INTEL] Starting %d enrichment workers", m.workers)
+	logging.Info("[THREAT_INTEL] Starting %d enrichment workers", m.workers)
 
 	for i := 0; i < m.workers; i++ {
 		m.wg.Add(1)
@@ -60,11 +60,11 @@ func (m *Manager) Start() {
 
 // Stop gracefully shuts down enrichment workers
 func (m *Manager) Stop() {
-	log.Println("[THREAT_INTEL] Stopping enrichment workers")
+	logging.Info("[THREAT_INTEL] Stopping enrichment workers")
 	close(m.stopChan)
 	m.wg.Wait()
 	close(m.queue)
-	log.Println("[THREAT_INTEL] Enrichment workers stopped")
+	logging.Info("[THREAT_INTEL] Enrichment workers stopped")
 }
 
 // EnqueueEnrichment adds an IP to the enrichment queue
@@ -89,26 +89,26 @@ func (m *Manager) EnqueueEnrichment(appID, sourceIP string) {
 	// Non-blocking send (queue might be full, but that's okay - we'll skip)
 	select {
 	case m.queue <- job:
-		log.Printf("[THREAT_INTEL] Enqueued enrichment job for IP: %s (app_id: %s)", sourceIP, appID)
+		logging.Info("[THREAT_INTEL] Enqueued enrichment job for IP: %s (app_id: %s)", sourceIP, appID)
 	default:
-		log.Printf("[THREAT_INTEL] Queue full, skipping enrichment for IP: %s", sourceIP)
+		logging.Info("[THREAT_INTEL] Queue full, skipping enrichment for IP: %s", sourceIP)
 	}
 }
 
 // worker processes enrichment jobs from the queue
 func (m *Manager) worker(id int) {
 	defer m.wg.Done()
-	log.Printf("[THREAT_INTEL] Worker %d started", id)
+	logging.Info("[THREAT_INTEL] Worker %d started", id)
 
 	for {
 		select {
 		case <-m.stopChan:
-			log.Printf("[THREAT_INTEL] Worker %d stopping", id)
+			logging.Info("[THREAT_INTEL] Worker %d stopping", id)
 			return
 
 		case job, ok := <-m.queue:
 			if !ok {
-				log.Printf("[THREAT_INTEL] Worker %d queue closed", id)
+				logging.Info("[THREAT_INTEL] Worker %d queue closed", id)
 				return
 			}
 
@@ -119,11 +119,11 @@ func (m *Manager) worker(id int) {
 
 // processJob enriches a single IP
 func (m *Manager) processJob(job EnrichmentJob, workerID int) {
-	log.Printf("[THREAT_INTEL] Worker %d processing: %s (app_id: %s)", workerID, job.SourceIP, job.AppID)
+	logging.Info("[THREAT_INTEL] Worker %d processing: %s (app_id: %s)", workerID, job.SourceIP, job.AppID)
 
 	result, err := m.enricher.EnrichIP(job.AppID, job.SourceIP)
 	if err != nil {
-		log.Printf("[THREAT_INTEL] Worker %d enrichment failed for %s: %v (retry %d/%d)", workerID, job.SourceIP, err, job.Retry, job.MaxRetry)
+		logging.Error("[THREAT_INTEL] Worker %d enrichment failed for %s: %v (retry %d/%d)", workerID, job.SourceIP, err, job.Retry, job.MaxRetry)
 
 		// Retry on failure
 		if job.Retry < job.MaxRetry {
@@ -132,16 +132,16 @@ func (m *Manager) processJob(job EnrichmentJob, workerID int) {
 
 			select {
 			case m.queue <- job:
-				log.Printf("[THREAT_INTEL] Requeued job for %s (retry %d)", job.SourceIP, job.Retry)
+				logging.Info("[THREAT_INTEL] Requeued job for %s (retry %d)", job.SourceIP, job.Retry)
 			default:
-				log.Printf("[THREAT_INTEL] Failed to requeue job for %s", job.SourceIP)
+				logging.Error("[THREAT_INTEL] Failed to requeue job for %s", job.SourceIP)
 			}
 		}
 		return
 	}
 
 	if result != nil {
-		log.Printf("[THREAT_INTEL] Worker %d completed enrichment for %s: risk_score=%d threat_level=%s", workerID, job.SourceIP, result.RiskScore, result.ThreatLevel)
+		logging.Info("[THREAT_INTEL] Worker %d completed enrichment for %s: risk_score=%d threat_level=%s", workerID, job.SourceIP, result.RiskScore, result.ThreatLevel)
 	}
 }
 

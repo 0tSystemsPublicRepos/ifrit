@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"time"
 	"database/sql"
 
 	"github.com/0tSystemsPublicRepos/ifrit/internal/config"
 	"github.com/0tSystemsPublicRepos/ifrit/internal/database"
+	"github.com/0tSystemsPublicRepos/ifrit/internal/logging"
 )
 
 type WebhookProvider struct {
@@ -50,12 +50,12 @@ func (wp *WebhookProvider) Send(notification *Notification) error {
 	// Get all active webhooks for this app
 	webhooks, err := wp.getActiveWebhooks(notification.AppID)
 	if err != nil {
-		log.Printf("[WEBHOOK] Error fetching webhooks: %v", err)
+		logging.Error("[WEBHOOK] Error fetching webhooks: %v", err)
 		return err
 	}
 
 	if len(webhooks) == 0 {
-		log.Printf("[WEBHOOK] No active webhooks configured for app_id: %s", notification.AppID)
+		logging.Info("[WEBHOOK] No active webhooks configured for app_id: %s", notification.AppID)
 		return nil
 	}
 
@@ -80,20 +80,20 @@ func (wp *WebhookProvider) fireWebhook(webhook map[string]interface{}, payload *
 	for attempt := 1; attempt <= wp.config.RetryCount; attempt++ {
 		err := wp.sendWebhookRequest(endpoint, authType, authValue, payloadJSON)
 		if err == nil {
-			log.Printf("[WEBHOOK] ✓ Webhook %d fired successfully to %s (threat: %s/%d)", webhookID, endpoint, notification.ThreatLevel, notification.RiskScore)
+			logging.Info("[WEBHOOK] ✓ Webhook %d fired successfully to %s (threat: %s/%d)", webhookID, endpoint, notification.ThreatLevel, notification.RiskScore)
 			wp.recordWebhookFire(webhookID, "success", "")
 			return
 		}
 
 		lastErr = err
-		log.Printf("[WEBHOOK] Attempt %d/%d failed for webhook %d: %v", attempt, wp.config.RetryCount, webhookID, err)
+		logging.Error("[WEBHOOK] Attempt %d/%d failed for webhook %d: %v", attempt, wp.config.RetryCount, webhookID, err)
 
 		if attempt < wp.config.RetryCount {
 			time.Sleep(time.Duration(wp.config.RetryDelaySeconds) * time.Second)
 		}
 	}
 
-	log.Printf("[WEBHOOK] ✗ Webhook %d failed after %d attempts: %v", webhookID, wp.config.RetryCount, lastErr)
+	logging.Error("[WEBHOOK] ✗ Webhook %d failed after %d attempts: %v", webhookID, wp.config.RetryCount, lastErr)
 	wp.recordWebhookFire(webhookID, "failed", lastErr.Error())
 }
 
@@ -176,7 +176,7 @@ func (wp *WebhookProvider) getActiveWebhooks(appID string) ([]map[string]interfa
 	
 	rows, err := wp.db.GetDB().Query(query, appID)
 	if err != nil {
-		log.Printf("[WEBHOOK] Database query error: %v", err)
+		logging.Error("[WEBHOOK] Database query error: %v", err)
 		return nil, err
 	}
 	defer rows.Close()
@@ -188,7 +188,7 @@ func (wp *WebhookProvider) getActiveWebhooks(appID string) ([]map[string]interfa
 		var authValue sql.NullString
 		
 		if err := rows.Scan(&id, &endpoint, &authType, &authValue); err != nil {
-			log.Printf("[WEBHOOK] Row scan error: %v", err)
+			logging.Error("[WEBHOOK] Row scan error: %v", err)
 			continue
 		}
 
@@ -197,7 +197,7 @@ func (wp *WebhookProvider) getActiveWebhooks(appID string) ([]map[string]interfa
 			authVal = authValue.String
 		}
 
-		log.Printf("[WEBHOOK] Found webhook: id=%d endpoint=%s auth_type=%s", id, endpoint, authType)
+		logging.Debug("[WEBHOOK] Found webhook: id=%d endpoint=%s auth_type=%s", id, endpoint, authType)
 		webhooks = append(webhooks, map[string]interface{}{
 			"id":        id,
 			"endpoint":  endpoint,
@@ -207,9 +207,9 @@ func (wp *WebhookProvider) getActiveWebhooks(appID string) ([]map[string]interfa
 	}
 
 	if len(webhooks) == 0 {
-		log.Printf("[WEBHOOK] No active webhooks found for app_id: %s", appID)
+		logging.Debug("[WEBHOOK] No active webhooks found for app_id: %s", appID)
 	} else {
-		log.Printf("[WEBHOOK] Found %d active webhook(s) for app_id: %s", len(webhooks), appID)
+		logging.Info("[WEBHOOK] Found %d active webhook(s) for app_id: %s", len(webhooks), appID)
 	}
 
 	return webhooks, rows.Err()
@@ -221,8 +221,8 @@ func (wp *WebhookProvider) recordWebhookFire(webhookID int64, status, errorMsg s
 	// This could be extended to store webhook fire history in database
 	// For now, just log it
 	if status == "success" {
-		log.Printf("[WEBHOOK] Fire recorded: webhook_id=%d status=success", webhookID)
+		logging.Info("[WEBHOOK] Fire recorded: webhook_id=%d status=success", webhookID)
 	} else {
-		log.Printf("[WEBHOOK] Fire recorded: webhook_id=%d status=failed error=%s", webhookID, errorMsg)
+		logging.Error("[WEBHOOK] Fire recorded: webhook_id=%d status=failed error=%s", webhookID, errorMsg)
 	}
 }

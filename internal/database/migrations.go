@@ -2,25 +2,26 @@ package database
 
 import (
 	"database/sql"
-	"log"
+
+	"github.com/0tSystemsPublicRepos/ifrit/internal/logging"
 )
 
 // RunMigrations executes all pending database migrations
 func RunMigrations(db *sql.DB) error {
 	// Migration 1: Seed attack patterns
 	if err := seedAttackPatterns(db); err != nil {
-		log.Printf("Warning: Could not seed attack patterns: %v", err)
+		logging.Error("Warning: Could not seed attack patterns: %v", err)
 		// Don't fail on seed errors, just log
 	}
 
 	// Migration 2: Seed default intel collection templates
 	if err := seedIntelTemplates(db); err != nil {
-		log.Printf("Warning: Could not seed intel templates: %v", err)
+		logging.Error("Warning: Could not seed intel templates: %v", err)
 	}
 
 	// Migration 3: Seed default payloads
 	if err := seedPayloadTemplates(db); err != nil {
-		log.Printf("Warning: Could not seed payloads: %v", err)
+		logging.Error("Warning: Could not seed payloads: %v", err)
 	}
 
 	return nil
@@ -37,11 +38,11 @@ func seedAttackPatterns(db *sql.DB) error {
 
 	// If patterns already seeded, skip
 	if count > 0 {
-		log.Printf("Attack patterns already seeded (%d patterns)", count)
+		logging.Info("Attack patterns already seeded (%d patterns)", count)
 		return nil
 	}
 
-	log.Println("Seeding attack patterns...")
+	logging.Info("Seeding attack patterns...")
 
 	patterns := []struct {
 		appID          string
@@ -150,12 +151,12 @@ func seedAttackPatterns(db *sql.DB) error {
 	for _, p := range patterns {
 		_, err := stmt.Exec(p.appID, p.signature, p.attackType, p.classification, p.method, p.pathPattern, p.responseCode, 0, p.confidence)
 		if err != nil {
-			log.Printf("Warning: Could not seed pattern %s: %v", p.signature, err)
+			logging.Error("Warning: Could not seed pattern %s: %v", p.signature, err)
 			continue
 		}
 	}
 
-	log.Printf("Successfully seeded %d attack patterns", len(patterns))
+	logging.Info("Successfully seeded %d attack patterns", len(patterns))
 	return nil
 }
 
@@ -169,11 +170,11 @@ func seedIntelTemplates(db *sql.DB) error {
 	}
 
 	if count > 0 {
-		log.Printf("Intel templates already seeded (%d templates)", count)
+		logging.Info("Intel templates already seeded (%d templates)", count)
 		return nil
 	}
 
-	log.Println("Seeding intel collection templates...")
+	logging.Info("Seeding intel collection templates...")
 
 	templates := []struct {
 		name        string
@@ -246,12 +247,12 @@ document.addEventListener('submit', function(e) {
 	for _, t := range templates {
 		_, err := stmt.Exec(t.name, t.templateType, t.content, t.description)
 		if err != nil {
-			log.Printf("Warning: Could not seed intel template %s: %v", t.name, err)
+			logging.Error("Warning: Could not seed intel template %s: %v", t.name, err)
 			continue
 		}
 	}
 
-	log.Printf("Successfully seeded %d intel templates", len(templates))
+	logging.Info("Successfully seeded %d intel templates", len(templates))
 	return nil
 }
 
@@ -265,11 +266,11 @@ func seedPayloadTemplates(db *sql.DB) error {
 	}
 
 	if count > 0 {
-		log.Printf("Payload templates already seeded (%d templates)", count)
+		logging.Info("Payload templates already seeded (%d templates)", count)
 		return nil
 	}
 
-	log.Println("Seeding payload templates...")
+	logging.Info("Seeding payload templates...")
 
 	payloads := []struct {
 		name        string
@@ -373,11 +374,11 @@ games:x:5:60:games:/usr/games:/usr/sbin/nologin`,
 	for _, p := range payloads {
 		_, err := stmt.Exec(p.name, p.attackType, p.payloadType, p.content, p.contentType, p.statusCode, p.priority)
 		if err != nil {
-			log.Printf("Warning: Could not seed payload %s: %v", p.name, err)
+			logging.Error("Warning: Could not seed payload %s: %v", p.name, err)
 			continue
 		}
 	}
 
-	log.Printf("Successfully seeded %d payload templates", len(payloads))
+	logging.Info("Successfully seeded %d payload templates", len(payloads))
 	return nil
 }

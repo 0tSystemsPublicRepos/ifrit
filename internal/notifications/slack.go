@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"time"
 
 	"github.com/0tSystemsPublicRepos/ifrit/internal/config"
+	"github.com/0tSystemsPublicRepos/ifrit/internal/logging"
 )
 
 type SlackProvider struct {
@@ -44,11 +44,11 @@ func (sp *SlackProvider) Send(notification *Notification) error {
 
 	err := sp.sendToSlack(payload)
 	if err != nil {
-		log.Printf("[SLACK] ✗ Failed to send Slack message: %v", err)
+		logging.Error("[SLACK] ✗ Failed to send Slack message: %v", err)
 		return err
 	}
 
-	log.Printf("[SLACK] ✓ Slack message sent successfully (threat: %s/%d)", notification.ThreatLevel, notification.RiskScore)
+	logging.Info("[SLACK] ✓ Slack message sent successfully (threat: %s/%d)", notification.ThreatLevel, notification.RiskScore)
 	return nil
 }
 

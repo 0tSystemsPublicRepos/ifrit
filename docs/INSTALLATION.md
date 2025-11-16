@@ -10,7 +10,7 @@
 ### Prerequisites
 - Go 1.21+
 - SQLite3
-- Claude API key (from Anthropic)
+- Claude or Gemini API key (or both if you are using fallback mechanism for redundancy) 
 
 ### 1. Clone Repository
 ```bash
@@ -24,7 +24,7 @@ cp config/default.json.example config/default.json
 nano config/default.json
 ```
 
-Add your Claude API key:
+Add your Claude/Gemini API key under the relevant section in configuration:
 ```json
 {
   "llm": {
@@ -388,7 +388,7 @@ config/default.json
     "whitelist_paths": ["/health", "/metrics"]
   },
   "execution_mode": {
-    "mode": "normal"
+    "mode": "deception"
   },
   "anonymization": {
     "enabled": true,
@@ -447,7 +447,7 @@ config/default.json
 ```json
 {
   "execution_mode": {
-    "mode": "onboarding",             // onboarding, learning, or normal
+    "mode": "onboarding",             // onboarding, deception 
     "onboarding_auto_whitelist": true,
     "onboarding_duration_days": 7,
     "onboarding_log_file": "./logs/onboarding.log"
@@ -489,7 +489,7 @@ Override config with environment variables (optional):
 ```bash
 export IFRIT_LISTEN=":9000"
 export IFRIT_TARGET="http://backend:8080"
-export IFRIT_MODE="normal"
+export IFRIT_MODE="deception"
 export IFRIT_DEBUG="false"
 export CLAUDE_API_KEY="sk-ant-..."
 ```
@@ -567,11 +567,9 @@ Allow TCP 8443 from 192.168.0.0/16
 
 ### Outbound Rules
 ```bash
-# Allow outbound to Claude API
+# Allow outbound to Claude API / Google Gemini
 Allow TCP 443 to api.anthropic.com
-
-# Allow outbound to OpenAI API (if using GPT)
-Allow TCP 443 to api.openai.com
+Allow TCP 443 to generativelanguage.googleapis.com
 
 # Allow DNS
 Allow UDP 53 to 0.0.0.0/0
@@ -729,7 +727,7 @@ dial tcp: connection timeout
 **Checklist:**
 1. Internet connection working
 2. Firewall allows outbound 443
-3. Claude API is accessible
+3. Claude/Gemini API is accessible
 4. Enable debug logging to see full error
 
 ### Build Errors

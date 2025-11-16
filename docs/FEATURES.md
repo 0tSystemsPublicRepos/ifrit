@@ -50,7 +50,7 @@
 - No external API calls
 
 **Stage 3: LLM Analysis**
-- Claude/GPT integration for novel threats
+- Claude/Gemini integration for novel threats
 - Anonymized request data sent to LLM
 - Response time: ~3 seconds (first time), <10ms (cached)
 - Automatic pattern caching for future use
@@ -100,7 +100,7 @@ curl -H "X-App-ID: app2" http://localhost:8080/api/users
 
 **Detection Accuracy:**
 - Stage 1-2: 100% (pattern-based, no false positives)
-- Stage 3: ~95% (LLM-based, depends on Claude accuracy)
+- Stage 3: ~95% (LLM-based, depends on Claude/Gemini accuracy)
 - Overall: ~95% with <5% false positive rate after deployment
 
 ### Whitelist Management
@@ -189,7 +189,7 @@ See DETECTION_MODES.md for full comparison.
 
 **How it works:**
 1. New attack detected
-2. Claude analyzes and generates honeypot response
+2. Claude/Gemini analyzes and generates honeypot response
 3. Pattern stored in database with signature + response
 4. Future identical attacks: cached response (<10ms)
 
@@ -203,8 +203,8 @@ See DETECTION_MODES.md for full comparison.
 - First/last seen timestamps
 
 **Cost Optimization:**
-- Hour 1: 100 unique attacks → 100 Claude calls → ~$0.30
-- Hour 2: Same 100 attack types → 0 Claude calls → $0.00
+- Hour 1: 100 unique attacks → 100 Claude/Gemini calls → ~$0.30
+- Hour 2: Same 100 attack types → 0 Claude/Gemini calls → $0.00
 - Result: 90%+ savings after learning phase
 
 ### Attacker Profiling Examples (intel collection payload can be fully customized)
@@ -271,30 +271,12 @@ See DETECTION_MODES.md for full comparison.
 
 **Use case:** New deployment, need baseline
 
-### Learning Mode
-
-**Purpose:** Log all traffic without blocking or automatic whitelisting
-
-**Behavior:**
-- All traffic passes through
-- All requests logged
-- Manual review of logs
-- No detection pipeline
-
-**Configuration:**
-```json
-{
-  "execution_mode": {
-    "mode": "learning"
-  }
-}
-```
 
 **Use case:** Manual traffic analysis, compliance logging
 
-### Normal Mode
+### 
 
-**Purpose:** Production deployment with full detection
+** Deception nide:** Production deployment with full detection
 
 **Behavior:**
 - Full 4-stage detection pipeline
@@ -306,7 +288,7 @@ See DETECTION_MODES.md for full comparison.
 ```json
 {
   "execution_mode": {
-    "mode": "normal"
+    "mode": "deception"
   }
 }
 ```
@@ -335,7 +317,7 @@ See DETECTION_MODES.md for full comparison.
 ### Dynamic Payload Generation
 
 **LLM-Powered:**
-- Claude generates realistic honeypot responses
+- Claude/Gemini generates realistic honeypot responses
 - Context-aware (understands attack type and path)
 - Automatically cached for future use
 - Can be disabled for instant responses
@@ -710,12 +692,10 @@ curl http://localhost:8443/api/health
 ### LLM Provider Support
 
 **Currently supported:**
-- Anthropic Claude (primary)
-- Anthropic Claude (fallback)
+- Anthropic Claude 
+- Google Gemini 
 
 **Future support:**
-- OpenAI GPT-4
-- GPT-3.5-turbo
 - Open-source models (Llama, Mistral)
 - Custom LLM endpoints
 
@@ -794,11 +774,11 @@ curl http://localhost:8443/api/health
   "detection": {
     "mode": "detection",
     "skip_body_check_on_whitelist": false,
-    "whitelist_ips": ["192.168.1.0/24"],
+    "whitelist_ips": ["192.168.1.24"],
     "whitelist_paths": ["/health", "/metrics"]
   },
   "execution_mode": {
-    "mode": "normal"
+    "mode": "deception"
   },
   "system": {
     "debug": false
@@ -808,4 +788,4 @@ curl http://localhost:8443/api/health
 
 ---
 
-**Status:** MVP (0.1.1)  
+**Status:** MVP (0.2.1)  

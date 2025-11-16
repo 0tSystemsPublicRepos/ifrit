@@ -2,8 +2,9 @@ package llm
 
 import (
 	"fmt"
-	"log"
 	"sync"
+
+	"github.com/0tSystemsPublicRepos/ifrit/internal/logging"
 )
 
 type Manager struct {
@@ -13,7 +14,7 @@ type Manager struct {
 	cacheMu     sync.RWMutex
 }
 
-func NewManager(primaryProvider, claudeKey, claudeModel, fallbackProvider, fallbackKey, fallbackModel string) *Manager {
+func NewManager(primaryProvider, claudeKey, claudeModel, geminiKey, geminiModel string) *Manager {
 	m := &Manager{
 		primaryName: primaryProvider,
 		providers:   make(map[string]Provider),
@@ -24,11 +25,11 @@ func NewManager(primaryProvider, claudeKey, claudeModel, fallbackProvider, fallb
 	claudeProvider := NewClaudeProvider(claudeKey, claudeModel)
 	m.providers["claude"] = claudeProvider
 
-	// Initialize GPT provider (stub for now)
-	gptProvider := NewClaudeProvider(fallbackKey, fallbackModel)
-	m.providers["gpt"] = gptProvider
+	// Initialize Gemini provider
+	geminiProvider := NewGeminiProvider(geminiKey, geminiModel)
+	m.providers["gemini"] = geminiProvider
 
-	log.Printf("LLM Manager initialized with primary: %s, fallback: %s", primaryProvider, fallbackProvider)
+	logging.Info("LLM Manager initialized with primary: %s | Available providers: claude, gemini", primaryProvider)
 	return m
 }
 
@@ -51,7 +52,7 @@ func (m *Manager) AnalyzeRequest(requestData map[string]string) (*AnalysisResult
 
 	result, err := provider.AnalyzeRequest(requestData)
 	if err != nil {
-		log.Printf("[LLM] Error analyzing request: %v", err)
+		logging.Error("[LLM] Error analyzing request with %s: %v", m.primaryName, err)
 		return nil, err
 	}
 
@@ -66,7 +67,7 @@ func (m *Manager) GeneratePayload(attackType string) (map[string]interface{}, er
 
 	payload, err := provider.GeneratePayload(attackType)
 	if err != nil {
-		log.Printf("[LLM] Error generating payload: %v", err)
+		logging.Error("[LLM] Error generating payload with %s: %v", m.primaryName, err)
 		return nil, err
 	}
 
@@ -89,7 +90,7 @@ func (m *Manager) ClearCache() {
 	defer m.cacheMu.Unlock()
 
 	m.cache = make(map[string]interface{})
-	log.Printf("[LLM] Cache cleared")
+	logging.Info("[LLM] Cache cleared")
 }
 
 func (m *Manager) CacheResult(key string, value interface{}) {

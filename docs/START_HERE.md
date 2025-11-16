@@ -9,7 +9,7 @@ IFRIT is an intelligent reverse proxy that sits between attackers and your infra
 When an attack comes in, IFRIT makes a smart decision:
 - Is this obviously malicious? → Block with honeypot
 - Is it a pattern we've seen before? → Block with cached response
-- Do we need to ask Claude/GPT? → Analyze and block
+- Do we need to ask Claude/Gemini? → Analyze and block
 - Is it legitimate? → Pass through
 
 If it's an attack, IFRIT serves **fake data** back to the attacker (fake credentials, fake database records, etc.). This tricks the attacker while revealing their tools and techniques.
@@ -48,23 +48,16 @@ IFRIT learns continuously. Each attack analyzed becomes a learned pattern. After
 ### Three Execution Modes
 
 **Onboarding Mode** (Days 1-7 of deployment)
-- Auto-detects attacks
-- Auto-whitelists legitimate paths
+- Allow all paths
 - Zero false positives
 - Automatic baseline creation
 - Best for: New deployment
 
-**Learning Mode** (Optional)
-- All traffic passes through
-- Logged for manual review
-- No automatic whitelisting
-- Best for: Manual analysis
-
-**Normal Mode** (Production)
+**Normal Mode** (aka Deception)
 - Full detection pipeline enabled
 - Honeypot responses for attacks
 - Real-time pattern learning
-- Claude/GPT integration
+- Claude/Gemini integration
 - Best for: Active threat defense
 
 ### Two Detection Modes
@@ -73,15 +66,16 @@ IFRIT learns continuously. Each attack analyzed becomes a learned pattern. After
 - Smart threat analysis
 - Learns attack patterns
 - Optional whitelist for exceptions
-- ~5% false positive rate possible
+- ~3% false positive rate possible
 - Best for: Standard deployments
 
-**Allowlist Mode** (New in 0.1.1)
+**Allowlist Mode** 
 - Strict access control
 - Only whitelisted IPs/paths allowed
 - Everything else blocked
 - Zero false positives (by design)
 - Best for: VPN-only, admin portals, strict zero-trust
+- Optional: You can enabled headers/requests body analysis for allowed users/IPs
 
 ### Four-Stage Detection Pipeline
 ```
@@ -101,7 +95,7 @@ Stage 2: Database Patterns
 └─ Continue to Stage 3
 
 Stage 3: LLM Analysis
-├─ Claude/GPT confirms attack? → HONEYPOT ✓
+├─ Claude/Gemini confirms attack? → HONEYPOT ✓
 └─ Is legitimate → Forward to backend ✓
 ```
 
@@ -136,7 +130,7 @@ cd ifrit
 cp config/default.json.example config/default.json
 ```
 
-Edit `config/default.json` and add your Claude API key:
+Edit `config/default.json` and add your Claude/Gemini API key under the relevant section:
 ```json
 {
   "llm": {
@@ -320,16 +314,16 @@ GET /api/notifications/history
 **A:** Not in Onboarding Mode. Use that for 1 week to establish baseline. After that, ~5% false positive rate in Detection Mode, 0% in Allowlist Mode.
 
 ### Q: How much does it cost?
-**A:** Free to deploy. If it helps you, consider: ⭐ starring on GitHub, contributing, or [buying us a coffee ☕](mailto:ifrit@0t.systems). Optional Claude API costs: ~$0.30 for first week of learning, then 90% savings via caching. 
+**A:** Free to deploy. If it helps you, consider: ⭐ starring on GitHub, contributing, or [buying us a coffee ☕](mailto:ifrit@0t.systems). Optional Claude/Gemini API costs: ~$0.30 for first week of learning, then 90% savings via caching. 
 
 ### Q: Can I run multiple IFRIT instances?
 **A:** Yes, with shared database (not fully tested, need network-mounted SQLite or PostgreSQL support coming soon).
 
-### Q: What if Claude/GPT is down?
+### Q: What if Claude/Gemini are down?
 **A:** IFRIT falls back to config defaults and whitelist mode. Still protects against known patterns.
 
 ### Q: How is my data handled?
-**A:** Sensitive data (tokens, credentials, emails) is anonymized before sending to Claude. See ANONYMIZATION_TESTING.md.
+**A:** Sensitive data (tokens, credentials, emails) is anonymized before sending to Claude/Gemini. See ANONYMIZATION_TESTING.md.
 
 ### Q: Can I use IFRIT with other security tools?
 **A:** Yes. IFRIT works alongside IDS/IPS, WAF, firewalls, etc. It's complementary, not a replacement.
@@ -340,12 +334,12 @@ GET /api/notifications/history
 ```
 Starting fresh deployment?
 ├─ YES → Use Onboarding Mode for 1 week
-│        └─ After 1 week → Switch to Normal Mode
+│        └─ After 1 week → Switch to Detection Mode
 │
 └─ NO → Choose based on use case:
-         ├─ Need strict access control? → Allowlist Mode
-         ├─ Want smart threat analysis? → Detection Mode
-         └─ Testing/learning? → Learning Mode
+         ├─ Need strict access control? → Allowlist(by IP + PATH) + optionally analyze headers/body for whitelisted users+paths
+         ├─ Want smart threat analysis + Active Deception? → Detection Mode + LLM Analysis + Dynamic Payload generation
+         └─ Testing/learning? → Onboarding Mode (Allow all incoming traffic, no filtering or analysis, all traffic IS ADDED AS ALLOWED IN DATABASE EXCEPTIONS)
 ```
 
 ---

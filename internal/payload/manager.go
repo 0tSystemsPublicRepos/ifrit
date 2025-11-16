@@ -4,10 +4,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
 
 	"github.com/0tSystemsPublicRepos/ifrit/internal/config"
 	"github.com/0tSystemsPublicRepos/ifrit/internal/llm"
+	"github.com/0tSystemsPublicRepos/ifrit/internal/logging"
 )
 
 type AttackerContext struct {
@@ -62,20 +62,20 @@ func (pm *PayloadManager) SetLLMManager(manager *llm.Manager) {
 
 // GetPayloadForAttack returns appropriate honeypot payload for detected attack
 func (pm *PayloadManager) GetPayloadForAttack(ctx AttackerContext, cfg *config.PayloadManagement, llmManager *llm.Manager) (*PayloadResponse, error) {
-	log.Printf("[PAYLOAD] Getting payload for attack type: %s from %s", ctx.AttackType, ctx.SourceIP)
+	logging.Info("[PAYLOAD] Getting payload for attack type: %s from %s", ctx.AttackType, ctx.SourceIP)
 
 	// 1. Check if we should use database payloads
 	if cfg.UseDBPayloads {
 		payload, err := pm.getPayloadFromDB(ctx.AttackType)
 		if err == nil && payload != nil {
-			log.Printf("[PAYLOAD] Using cached payload from DB for: %s", ctx.AttackType)
+			logging.Info("[PAYLOAD] Using cached payload from DB for: %s", ctx.AttackType)
 			return payload, nil
 		}
 	}
 
 	// 2. Try to generate dynamic payload via LLM
 	if cfg.GenerateDynamicPayload && llmManager != nil {
-		log.Printf("[PAYLOAD] Generating dynamic payload via LLM for: %s", ctx.AttackType)
+		logging.Info("[PAYLOAD] Generating dynamic payload via LLM for: %s", ctx.AttackType)
 		payload, err := pm.generateLLMPayload(ctx, cfg, llmManager)
 		if err == nil && payload != nil {
 			return payload, nil
@@ -83,7 +83,7 @@ func (pm *PayloadManager) GetPayloadForAttack(ctx AttackerContext, cfg *config.P
 	}
 
 	// 3. Fall back to default responses
-	log.Printf("[PAYLOAD] Using default response for: %s", ctx.AttackType)
+	logging.Info("[PAYLOAD] Using default response for: %s", ctx.AttackType)
 	return pm.getDefaultPayload(ctx.AttackType, cfg), nil
 }
 
@@ -103,10 +103,10 @@ func (pm *PayloadManager) getPayloadFromDB(attackType string) (*PayloadResponse,
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			log.Printf("[PAYLOAD] No payload template found in DB for: %s", attackType)
+			logging.Debug("[PAYLOAD] No payload template found in DB for: %s", attackType)
 			return nil, nil
 		}
-		log.Printf("[PAYLOAD] Error querying DB for payload: %v", err)
+		logging.Error("[PAYLOAD] Error querying DB for payload: %v", err)
 		return nil, err
 	}
 
@@ -119,55 +119,87 @@ func (pm *PayloadManager) getPayloadFromDB(attackType string) (*PayloadResponse,
 
 // generateLLMPayload generates payload via LLM with intel injection
 func (pm *PayloadManager) generateLLMPayload(ctx AttackerContext, cfg *config.PayloadManagement, llmManager *llm.Manager) (*PayloadResponse, error) {
-	// Get LLM provider (Claude)
+	// Get LLM provider
 	provider := llmManager.GetProvider(llmManager.GetPrimaryName())
 	if provider == nil {
 		return nil, fmt.Errorf("LLM provider not available")
 	}
 
-	claudeProvider, ok := provider.(*llm.ClaudeProvider)
-	if !ok {
-		return nil, fmt.Errorf("provider is not Claude")
+	// Try Claude provider first
+	if claudeProvider, ok := provider.(*llm.ClaudeProvider); ok {
+		intelTemplates, err := pm.getIntelTemplates()
+		if err != nil {
+			logging.Error("[PAYLOAD] Error getting intel templates: %v", err)
+			intelTemplates = []map[string]interface{}{}
+		}
+
+		claudeProvider.SetIntelTemplates(intelTemplates)
+
+		intelTemplateID := cfg.IntelCollectionPayloadID
+		if intelTemplateID <= 0 {
+			intelTemplateID = 1
+		}
+
+		payloadData, err := claudeProvider.GeneratePayloadWithIntel(ctx.AttackType, intelTemplateID)
+		if err != nil {
+			logging.Error("[PAYLOAD] Error generating LLM payload: %v", err)
+			return nil, err
+		}
+
+		payloadJSON, err := json.Marshal(payloadData)
+		if err != nil {
+			return nil, err
+		}
+
+		if cfg.CacheLLMPayloadsToDb {
+			pm.cachePayloadToDB(ctx.AttackType, string(payloadJSON))
+		}
+
+		return &PayloadResponse{
+			Body:        string(payloadJSON),
+			ContentType: "application/json",
+			StatusCode:  200,
+		}, nil
 	}
 
-	// Get intel templates from database
-	intelTemplates, err := pm.getIntelTemplates()
-	if err != nil {
-		log.Printf("[PAYLOAD] Error getting intel templates: %v", err)
-		intelTemplates = []map[string]interface{}{}
+	// Try Gemini provider
+	if geminiProvider, ok := provider.(*llm.GeminiProvider); ok {
+		intelTemplates, err := pm.getIntelTemplates()
+		if err != nil {
+			logging.Error("[PAYLOAD] Error getting intel templates: %v", err)
+			intelTemplates = []map[string]interface{}{}
+		}
+
+		geminiProvider.SetIntelTemplates(intelTemplates)
+
+		intelTemplateID := cfg.IntelCollectionPayloadID
+		if intelTemplateID <= 0 {
+			intelTemplateID = 1
+		}
+
+		payloadData, err := geminiProvider.GeneratePayloadWithIntel(ctx.AttackType, intelTemplateID)
+		if err != nil {
+			logging.Error("[PAYLOAD] Error generating LLM payload: %v", err)
+			return nil, err
+		}
+
+		payloadJSON, err := json.Marshal(payloadData)
+		if err != nil {
+			return nil, err
+		}
+
+		if cfg.CacheLLMPayloadsToDb {
+			pm.cachePayloadToDB(ctx.AttackType, string(payloadJSON))
+		}
+
+		return &PayloadResponse{
+			Body:        string(payloadJSON),
+			ContentType: "application/json",
+			StatusCode:  200,
+		}, nil
 	}
 
-	// Set intel templates on Claude provider
-	claudeProvider.SetIntelTemplates(intelTemplates)
-
-	// Generate payload with intel injection
-	intelTemplateID := cfg.IntelCollectionPayloadID
-	if intelTemplateID <= 0 {
-		intelTemplateID = 1
-	}
-
-	payloadData, err := claudeProvider.GeneratePayloadWithIntel(ctx.AttackType, intelTemplateID)
-	if err != nil {
-		log.Printf("[PAYLOAD] Error generating LLM payload: %v", err)
-		return nil, err
-	}
-
-	// Convert to JSON
-	payloadJSON, err := json.Marshal(payloadData)
-	if err != nil {
-		return nil, err
-	}
-
-	// Cache the payload if configured
-	if cfg.CacheLLMPayloadsToDb {
-		pm.cachePayloadToDB(ctx.AttackType, string(payloadJSON))
-	}
-
-	return &PayloadResponse{
-		Body:        string(payloadJSON),
-		ContentType: "application/json",
-		StatusCode:  200,
-	}, nil
+	return nil, fmt.Errorf("unsupported LLM provider type")
 }
 
 // getDefaultPayload returns default payload for attack type
@@ -260,11 +292,11 @@ func (pm *PayloadManager) cachePayloadToDB(attackType, payloadJSON string) error
 	)
 
 	if err != nil {
-		log.Printf("[PAYLOAD] Error caching payload to DB: %v", err)
+		logging.Error("[PAYLOAD] Error caching payload to DB: %v", err)
 		return err
 	}
 
-	log.Printf("[PAYLOAD] Cached LLM-generated payload for: %s", attackType)
+	logging.Info("[PAYLOAD] Cached LLM-generated payload for: %s", attackType)
 	return nil
 }
 

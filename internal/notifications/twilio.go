@@ -2,13 +2,13 @@ package notifications
 
 import (
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"strings"
 	"io"	
 
 	"github.com/0tSystemsPublicRepos/ifrit/internal/config"
+	"github.com/0tSystemsPublicRepos/ifrit/internal/logging"
 )
 
 type TwilioProvider struct {
@@ -38,7 +38,7 @@ func (tp *TwilioProvider) Send(notification *Notification) error {
 	}
 
 	if tp.config.FromNumber == "" {
-		log.Printf("[TWILIO] No sender phone number configured")
+		logging.Error("[TWILIO] No sender phone number configured")
 		return fmt.Errorf("no sender phone number configured")
 	}
 
@@ -48,11 +48,11 @@ func (tp *TwilioProvider) Send(notification *Notification) error {
 	// Send SMS
 	err := tp.sendSMS(tp.config.ToNumber, message)
 	if err != nil {
-		log.Printf("[TWILIO] ✗ Failed to send SMS: %v", err)
+		logging.Error("[TWILIO] ✗ Failed to send SMS: %v", err)
 		return err
 	}
 
-	log.Printf("[TWILIO] ✓ SMS sent successfully (threat: %s/%d)", notification.ThreatLevel, notification.RiskScore)
+	logging.Info("[TWILIO] ✓ SMS sent successfully (threat: %s/%d)", notification.ThreatLevel, notification.RiskScore)
 	return nil
 }
 
@@ -90,7 +90,7 @@ func (tp *TwilioProvider) sendSMS(toNumber, message string) error {
 
 	// Check response status
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		log.Printf("[TWILIO] API Response (%d): %s", resp.StatusCode, string(bodyBytes))
+		logging.Error("[TWILIO] API Response (%d): %s", resp.StatusCode, string(bodyBytes))
 		return fmt.Errorf("Twilio API returned status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 

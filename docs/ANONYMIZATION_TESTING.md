@@ -9,7 +9,7 @@
 
 The anonymization engine redacts sensitive data before sending requests to external LLMs (currently Anthropic Claude). This ensures privacy compliance (GDPR, HIPAA, PCI-DSS, CCPA) while maintaining attack detection accuracy.
 
-**Key principle:** Sensitive data stays local. Only necessary threat indicators are sent to Claude.
+**Key principle:** Sensitive data stays local. Only necessary threat indicators are sent to Claude/Gemini.
 
 ---
 
@@ -38,20 +38,20 @@ Works with all variants: `X-API-Key`, `x-api-key`, `X-Api-Key`, `X-API-KEY`
 
 - Redacts headers AND patterns
 - Logs all redactions with occurrence counts
-- Returns clean anonymized data to Claude
+- Returns clean anonymized data to Claude/Gemini
 - Original data optionally stored locally (if `store_original: true`)
 
 ### Integration Points
 
 - Anonymization engine wired into detection engine
 - Configured via `config.json` with `sensitive_headers` list
-- Works with all three execution modes (onboarding, learning, normal)
+- Works with all  execution modes (onboarding, detection)
 - Automatically applied before LLM analysis (Stage 4)
 
 
 ### Important: Balancing Privacy and Detection
 
-While anonymization protects sensitive data, it creates a trade-off: redacting too much information can reduce attack detection accuracy. For example, if attackers deliberately target sensitive headers (like `Authorization`) that are redacted before reaching Claude, the LLM may not recognize the attack pattern without the actual sensitive value.
+While anonymization protects sensitive data, it creates a trade-off: redacting too much information can reduce attack detection accuracy. For example, if attackers deliberately target sensitive headers (like `Authorization`) that are redacted before reaching Claude/Gemini, the LLM may not recognize the attack pattern without the actual sensitive value.
 
 **Recommendation:** Unless you are using a loca LLM for detection, please carefully evaluate what data to redact based on threat model:
 - **High privacy requirement:** Redact aggressively (GDPR/HIPAA compliance priority)

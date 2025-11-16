@@ -129,9 +129,9 @@ type Config struct {
 }
 
 type LLMConfig struct {
-	Primary string       `json:"primary"`
-	Claude  ClaudeConfig `json:"claude"`
-	GPT     GPTConfig    `json:"gpt"`
+	Primary string        `json:"primary"`
+	Claude  ClaudeConfig  `json:"claude"`
+	Gemini  GeminiConfig  `json:"gemini"`
 }
 
 type ClaudeConfig struct {
@@ -139,7 +139,9 @@ type ClaudeConfig struct {
 	Model  string `json:"model"`
 }
 
-type GPTConfig struct {
+
+
+type GeminiConfig struct {
 	APIKey string `json:"api_key"`
 	Model  string `json:"model"`
 }
@@ -183,6 +185,13 @@ type SystemConfig struct {
 	LogDir   string `json:"log_dir"`
 	LogLevel string `json:"log_level"`
 	Debug    bool   `json:"debug"`
+	LogRotation LogRotationConfig   `json:"log_rotation"`
+}
+
+type LogRotationConfig struct {
+	MaxSizeMB  int `json:"max_size_mb"`
+	MaxBackups int `json:"max_backups"`
+	MaxAgeDays int `json:"max_age_days"`
 }
 
 // === LOADER FUNCTIONS ===
@@ -224,14 +233,16 @@ func Load(configPath string) (*Config, error) {
 		fmt.Println("No config file found, using defaults")
 		return getDefaults(), nil
 	}
-
+	
 	// Parse JSON
 	var config Config
 	if err := json.Unmarshal(data, &config); err != nil {
 		fmt.Printf("Warning: Failed to parse config: %v, using defaults\n", err)
 		return getDefaults(), nil
 	}
-
+	fmt.Printf("[DEBUG] Raw JSON length: %d bytes\n", len(data))
+	fmt.Printf("[DEBUG] Parsed ExecutionMode.Mode: '%s'\n", config.ExecutionMode.Mode)
+	fmt.Printf("[DEBUG] Full ExecutionMode: %+v\n", config.ExecutionMode)
 	applyDefaults(&config)
 	expandEnvVars(&config)
 
@@ -241,7 +252,7 @@ func Load(configPath string) (*Config, error) {
 // expandEnvVars replaces ${VAR_NAME} with environment variables
 func expandEnvVars(cfg *Config) {
 	cfg.LLM.Claude.APIKey = os.ExpandEnv(cfg.LLM.Claude.APIKey)
-	cfg.LLM.GPT.APIKey = os.ExpandEnv(cfg.LLM.GPT.APIKey)
+	cfg.LLM.Gemini.APIKey = os.ExpandEnv(cfg.LLM.Gemini.APIKey)
 	cfg.Database.SQLite.Path = os.ExpandEnv(cfg.Database.SQLite.Path)
 	cfg.Database.MySQL.Password = os.ExpandEnv(cfg.Database.MySQL.Password)
 	cfg.Database.PostgreSQL.Password = os.ExpandEnv(cfg.Database.PostgreSQL.Password)
@@ -342,9 +353,9 @@ func getDefaults() *Config {
 				APIKey: "${CLAUDE_API_KEY}",
 				Model:  "claude-3-5-haiku-20241022",
 			},
-			GPT: GPTConfig{
-				APIKey: "${OPENAI_API_KEY}",
-				Model:  "gpt-4o-mini",
+			Gemini: GeminiConfig{
+				APIKey: "${GEMINI_API_KEY}",
+				Model:  "gemini-2.5-flash",
 			},
 		},
 		Detection: DetectionConfig{
@@ -407,9 +418,14 @@ func getDefaults() *Config {
 			},
 		},
 		System: SystemConfig{
-			HomeDir:  "./",
-			LogDir:   "./logs",
-			LogLevel: "info",
+		HomeDir:  "./",
+		LogDir:   "./logs",
+		LogLevel: "info",
+		LogRotation: LogRotationConfig{
+		MaxSizeMB:  100,
+		MaxBackups: 10,
+		MaxAgeDays: 30,
+		 },
 		},
 	}
 
@@ -490,6 +506,9 @@ func applyDefaults(cfg *Config) {
 	if cfg.LLM.Claude.Model == "" {
 		cfg.LLM.Claude.Model = "claude-3-5-haiku-20241022"
 	}
+	if cfg.LLM.Gemini.Model == "" {
+		cfg.LLM.Gemini.Model = "gemini-2.5-flash"
+	}
 
 	// Detection defaults
 	if cfg.Detection.Mode == "" {
@@ -542,6 +561,18 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.System.LogLevel == "" {
 		cfg.System.LogLevel = "info"
+	}
+
+
+	// Log rotation defaults
+	if cfg.System.LogRotation.MaxSizeMB == 0 {
+		cfg.System.LogRotation.MaxSizeMB = 100
+	}
+	if cfg.System.LogRotation.MaxBackups == 0 {
+		cfg.System.LogRotation.MaxBackups = 10
+	}
+	if cfg.System.LogRotation.MaxAgeDays == 0 {
+		cfg.System.LogRotation.MaxAgeDays = 30
 	}
 
 	// Threat Intelligence defaults
