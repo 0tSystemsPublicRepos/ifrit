@@ -1,6 +1,6 @@
 # IFRIT Proxy - AI-Powered Threat Deception & Intelligence
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-0.2.0-green.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-0.2.1-green.svg)](CHANGELOG.md)
 
 
 <div align="center">
@@ -15,7 +15,12 @@
 
 IFRIT is an AI-powered reverse proxy that intercepts incoming requests in real time, classifying each one as legitimate or malicious. Legitimate traffic is forwarded to backend; malicious traffic receives a customized AI-generated honeypot response that mimics the requested resource with fabricated data, deceiving attackers into wasting time on fake targets.
 
-**NEW in v0.2.0:** Threat Intelligence enrichment (AbuseIPDB, VirusTotal, IPInfo) + rule-based notifications (Email, Slack, SMS via Twilio, Webhooks)
+
+- Multi-LLM Support (Claude + Gemini)
+- **PostgreSQL database support (alongside SQLite)**  (**NEW in v0.3.0:**)
+- Enhanced threat intelligence with comprehensive risk scoring
+- Advanced notification system with rule-based filtering
+- **Database provider abstraction for seamless switching** (**NEW in v0.3.0:**)
 
 The proxy decision-making process follows a **four-stage pipeline**:
 
@@ -25,7 +30,7 @@ The proxy decision-making process follows a **four-stage pipeline**:
 4. **Stage 3: LLM Analysis** - AI: Is this a novel attack? → Generate Honeypot response tailored to this specific attack
 
 **Throughout this process:**
-- Sensitive data is anonymized before reaching local/external LLMs (currently supports Anthropic Claude + Google Gemini)
+- Sensitive data is anonymized before reaching local/external LLMs (supports Anthropic Claude + Google Gemini)
 - Attack patterns are learned and stored for future reference
 - Attacker profiles are built based on behavior
 - Threats enriched with 3rd-party intelligence (risk scoring, geolocation, reputation)
@@ -38,6 +43,61 @@ Legitimate users access the real backend. Attackers receive deceptive honeypot r
 
 ## Key Features
 
+### Multi-LLM Support
+
+Choose between multiple AI providers for threat analysis:
+
+- **Anthropic Claude** - Industry-leading security analysis with superior context understanding
+- **Google Gemini** - Cost-effective alternative with strong pattern recognition
+- **Provider Abstraction** - Seamless switching via configuration
+- **Automatic Fallback** - If primary provider fails, fallback to secondary
+- **Cost Optimization** - Choose provider based on your budget and requirements
+
+**Example Configuration:**
+```json
+{
+  "llm": {
+    "provider": "gemini",  // or "claude"
+    "claude": {
+      "api_key": "${ANTHROPIC_API_KEY}",
+      "model": "claude-sonnet-4-20250514"
+    },
+    "gemini": {
+      "api_key": "${GOOGLE_API_KEY}",
+      "model": "gemini-2.0-flash-exp"
+    }
+  }
+}
+```
+ 
+Production-ready database flexibility:
+
+- **SQLite** - Perfect for single-server deployments, zero configuration
+- **PostgreSQL** - Enterprise-grade for high-volume environments (**NEW in v0.3.0:**)
+- **Provider Abstraction** - Switch databases via configuration only
+- **Unified CLI** - Same commands work across both databases
+
+**When to use each:**
+- **SQLite**: Single server, < 1M attacks/day, quick setup
+- **PostgreSQL**: Clustered deployments, > 1M attacks/day, enterprise needs
+
+**PostgreSQL Configuration:**
+```json
+{
+  "database": {
+    "type": "postgresql",
+    "postgresql": {
+      "host": "localhost",
+      "port": 5432,
+      "user": "ifrit_user",
+      "password": "${POSTGRES_PASSWORD}",
+      "database": "ifrit",
+      "ssl_mode": "disable"
+    }
+  }
+}
+```
+
 ### Real-Time Threat Detection
 
 Four-stage pipeline detects attacks without requiring infrastructure changes:
@@ -47,7 +107,7 @@ Four-stage pipeline detects attacks without requiring infrastructure changes:
 - **Database patterns** - Learned attacks cached locally (<10ms)
 - **LLM analysis** - Novel threats analyzed by Claude/Gemini
 
-### Threat Intelligence (NEW in v0.2.0)
+### Threat Intelligence
 
 Enrich detected attacks with external intelligence:
 
@@ -67,7 +127,7 @@ Attack detected: SQL Injection from 1.2.3.4
 └─ Risk Score: 75 → HIGH threat
 ```
 
-### Notifications System (NEW in v0.2.0)
+### Notifications System
 
 Multi-channel alerts with rule-based filtering:
 
@@ -88,7 +148,7 @@ Multi-channel alerts with rule-based filtering:
 
 Reduce alert fatigue by alerting only on critical threats, escalate when needed.
 
-### Enhanced Dashboard (NEW in v0.2.0)
+### Enhanced Dashboard
 
 Real-time dashboard at `http://localhost:8443/`:
 
@@ -203,6 +263,8 @@ Complete command-line interface:
 ./ifrit-cli db stats
 ./ifrit-cli db schema
 ```
+
+**Note:** CLI automatically detects database type from config—same commands work for both SQLite and PostgreSQL!
 
 ### REST API
 
@@ -340,7 +402,7 @@ Parallel Enrichment (3 workers)
 └─ IPInfo: Geolocation + privacy flags
     ↓
 Risk Score Calculation
-├─ Formula: (AbuseIPDB × 0.4) + (VirusTotal × 0.35) + (IPInfo × 0.25) <= (can be customized based on needs)
+├─ Formula: (AbuseIPDB × 0.4) + (VirusTotal × 0.35) + (IPInfo × 0.25)
 ├─ Result: 0-100 score
 └─ Assign level: LOW/MEDIUM/HIGH/CRITICAL
     ↓
@@ -366,17 +428,17 @@ Check Notification Rules
 - Four-stage pipeline decision logic
 - Whitelist exception checking
 - Local rule pattern matching
-- LLM integration for novel threats
+- Multi-LLM integration for novel threats
 - Data anonymization before external APIs
 
-**Threat Intelligence Engine (NEW)**
+**Threat Intelligence Engine**
 - Parallel enrichment with 3 worker goroutines
 - Integration with AbuseIPDB, VirusTotal, IPInfo
 - Risk score calculation and threat classification
 - 24-hour caching for cost optimization
 - Non-blocking background enrichment
 
-**Notification Engine (NEW)**
+**Notification Engine**
 - Multi-channel delivery (Email, Slack, SMS, Webhooks)
 - Rule-based filtering by threat level
 - Retry logic for failed notifications
@@ -397,7 +459,9 @@ Check Notification Rules
 - Builds attacker profiles
 
 **Data Layer**
-- SQLite/PostgreSQL database (local, no external deps)
+- **SQLite** - Single-file database, zero configuration (default)
+- **PostgreSQL** - Enterprise-grade, cluster-ready (optional)
+- Database provider abstraction for seamless switching
 - Stores exceptions, patterns, attacks, profiles, threat intelligence
 - Fast pattern matching optimized queries
 - Foreign key relationships for data integrity
@@ -409,6 +473,7 @@ Check Notification Rules
 - Statistics and analytics
 - Threat intelligence queries
 - Notification configuration
+- Database-agnostic operations
 
 ---
 
@@ -422,7 +487,7 @@ All configuration through JSON (`config/default.json`).
 cp config/default.json.example config/default.json
 
 # Add your API keys to config/default.json
-# - Claude/Gemini API key (for LLM)
+# - Claude OR Gemini API key (for LLM)
 # - AbuseIPDB key (for threat intel)
 # - VirusTotal key (for threat intel)
 # - IPInfo key (for threat intel)
@@ -433,20 +498,70 @@ cp config/default.json.example config/default.json
 # Build and run
 go build -o ifrit ./cmd/ifrit
 ./ifrit &
-
 ```
 
-**Note:** The database (`./data/ifrit.db`) is created automatically on first run based on the path in `config/default.json`.
+### Database Configuration
 
-## IFRIT CLI Management Tool
-
-Build the CLI in the project root (same directory as `config/` and `data/`):
-
-```bash
-go build -o ifrit-cli ./cmd/ifrit-cli
-./ifrit-cli --help
+**SQLite (Default)**
+```json
+{
+  "database": {
+    "type": "sqlite",
+    "sqlite": {
+      "path": "./data/ifrit.db"
+    }
+  }
+}
 ```
 
+**PostgreSQL (Enterprise)**
+```json
+{
+  "database": {
+    "type": "postgresql",
+    "postgresql": {
+      "host": "localhost",
+      "port": 5432,
+      "user": "ifrit_user",
+      "password": "${POSTGRES_PASSWORD}",
+      "database": "ifrit",
+      "ssl_mode": "disable"
+    }
+  }
+}
+```
+
+### LLM Configuration
+
+**Claude**
+```json
+{
+  "llm": {
+    "provider": "claude",
+    "claude": {
+      "api_key": "${ANTHROPIC_API_KEY}",
+      "model": "claude-sonnet-4-20250514",
+      "max_tokens": 4096,
+      "temperature": 0.0
+    }
+  }
+}
+```
+
+**Gemini**
+```json
+{
+  "llm": {
+    "provider": "gemini",
+    "gemini": {
+      "api_key": "${GOOGLE_API_KEY}",
+      "model": "gemini-2.0-flash-exp",
+      "max_tokens": 4096,
+      "temperature": 0.0
+    }
+  }
+}
+```
 
 ### Detection Modes
 
@@ -597,27 +712,28 @@ Options: `onboarding`, `learning`, `normal`
 - **[START_HERE.md](docs/START_HERE.md)** - Quick navigation guide
 - **[INSTALLATION.md](docs/INSTALLATION.md)** - Detailed setup instructions
 - **[DETECTION_MODES.md](docs/DETECTION_MODES.md)** - Detection vs Allowlist modes
-- **[THREAT_INTELLIGENCE.md](docs/THREAT_INTELLIGENCE.md)** - Threat intel guide (NEW)
-- **[NOTIFICATIONS.md](docs/NOTIFICATIONS.md)** - Notification system (NEW)
-- **[API_ENDPOINTS.md](docs/API_ENDPOINTS.md)** - Complete API reference (NEW)
+- **[THREAT_INTELLIGENCE.md](docs/THREAT_INTELLIGENCE.md)** - Threat intel guide
+- **[NOTIFICATIONS.md](docs/NOTIFICATIONS.md)** - Notification system
+- **[API_ENDPOINTS.md](docs/API_ENDPOINTS.md)** - Complete API reference
 - **[FEATURES.md](docs/FEATURES.md)** - Complete feature list
 - **[DECEPTIVE_PAYLOADS_MANAGEMENT.md](docs/DECEPTIVE_PAYLOADS_MANAGEMENT.md)** - Honeypot system
-- **[ANONYMIZATION_TESTING.md](docs/ANONYMIZATION_TESTING.md)** - Data privacy details
+- **[ANONYMIZATION_TESTING.md](docs/ANONYMIZATION_TESTING.md)** - Data privacy details 
 
 ---
 
 ## Contributing
 
-IFRIT is developed openly on GitHub under Apache License 2.0. For Commercial support, new feature requests or integrations, and any other inquiries please contact ifrit@0t.systems
+IFRIT is developed openly on GitHub under Apache License 2.0. For commercial support, new feature requests or integrations, and any other inquiries please contact ifrit@0t.systems
 
 **Contributions welcome:**
-- New LLM providers (GPT, Llama, etc.)
+- New LLM providers (GPT, Llama, Mistral, etc.)
 - SIEM integrations (Wazuh, Splunk, ELK)
 - Threat intelligence providers
 - Notification channels
 - Payload templates for new attack types
 - Detection improvements and pattern refinements
 - Documentation and examples
+- Database optimizations
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
@@ -625,9 +741,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## Roadmap (v0.3.0+)
 
+- [ ] Keycloak authentication integration
+- [ ] Database-stored configuration
 - [ ] Machine learning scoring boost (higher CRITICAL rates)
 - [ ] Advanced SIEM integrations (Wazuh, Splunk)
-- [ ] PostgreSQL/MySQL support
+- [ ] MySQL/MariaDB support (?)
 - [ ] Notification scheduling & quiet hours
 - [ ] Attack deduplication
 - [ ] Notification batching
@@ -652,6 +770,6 @@ IFRIT Proxy is licensed under [Apache License 2.0](LICENSE). For commercial supp
 
 ## Acknowledgments
 
-Built with Go, SQLite, Anthropic/Google AI, and the security community's collective threat intelligence.
+Built with Go, SQLite/PostgreSQL, Anthropic/Google AI, and the security community's collective threat intelligence.
 
-**v0.2.1 Contributors:** 0tSystems Security Team
+**v0.3.0 Contributors:** https://www.0tSystems
