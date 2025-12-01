@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/0tSystemsPublicRepos/ifrit/internal/config"
+	"github.com/0tSystemsPublicRepos/ifrit/internal/database"
 	"github.com/0tSystemsPublicRepos/ifrit/internal/llm"
 	"github.com/0tSystemsPublicRepos/ifrit/internal/logging"
 )
@@ -45,11 +46,11 @@ type PayloadCondition struct {
 }
 
 type PayloadManager struct {
-	db         *sql.DB
+	db         database.DatabaseProvider	
 	llmManager *llm.Manager
 }
 
-func NewPayloadManager(db *sql.DB) *PayloadManager {
+func NewPayloadManager(db database.DatabaseProvider) *PayloadManager { 
 	return &PayloadManager{
 		db:         db,
 		llmManager: nil,
@@ -87,20 +88,12 @@ func (pm *PayloadManager) GetPayloadForAttack(ctx AttackerContext, cfg *config.P
 	return pm.getDefaultPayload(ctx.AttackType, cfg), nil
 }
 
+
+
 // getPayloadFromDB retrieves payload template from database
 func (pm *PayloadManager) getPayloadFromDB(attackType string) (*PayloadResponse, error) {
-	var content, contentType string
-	var statusCode int
-
-	err := pm.db.QueryRow(
-		`SELECT content, content_type, http_status_code 
-		 FROM payload_templates 
-		 WHERE attack_type = ? AND is_active = 1 
-		 ORDER BY priority DESC 
-		 LIMIT 1`,
-		attackType,
-	).Scan(&content, &contentType, &statusCode)
-
+	content, contentType, statusCode, err := pm.db.GetPayloadTemplate(attackType)
+	
 	if err != nil {
 		if err == sql.ErrNoRows {
 			logging.Debug("[PAYLOAD] No payload template found in DB for: %s", attackType)
@@ -116,6 +109,7 @@ func (pm *PayloadManager) getPayloadFromDB(attackType string) (*PayloadResponse,
 		StatusCode:  statusCode,
 	}, nil
 }
+
 
 // generateLLMPayload generates payload via LLM with intel injection
 func (pm *PayloadManager) generateLLMPayload(ctx AttackerContext, cfg *config.PayloadManagement, llmManager *llm.Manager) (*PayloadResponse, error) {
@@ -246,66 +240,20 @@ func (pm *PayloadManager) getDefaultPayload(attackType string, cfg *config.Paylo
 	}
 }
 
-// getIntelTemplates retrieves active intel collection templates from database
 func (pm *PayloadManager) getIntelTemplates() ([]map[string]interface{}, error) {
-	rows, err := pm.db.Query(
-		`SELECT id, name, template_type, content, description 
-		 FROM intel_collection_templates 
-		 WHERE is_active = 1 
-		 ORDER BY id ASC`,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var templates []map[string]interface{}
-	for rows.Next() {
-		var id int64
-		var name, templateType, content, description string
-
-		if err := rows.Scan(&id, &name, &templateType, &content, &description); err != nil {
-			continue
-		}
-
-		template := map[string]interface{}{
-			"id":              id,
-			"name":            name,
-			"template_type":   templateType,
-			"content":         content,
-			"description":     description,
-		}
-		templates = append(templates, template)
-	}
-
-	return templates, rows.Err()
+	return pm.db.GetIntelCollectionTemplates()
 }
 
 // cachePayloadToDB stores generated payload in database for future use
 func (pm *PayloadManager) cachePayloadToDB(attackType, payloadJSON string) error {
-	_, err := pm.db.Exec(
-		`INSERT OR REPLACE INTO payload_templates (name, attack_type, payload_type, content, content_type, http_status_code, is_active, created_at, created_by)
-		 VALUES (?, ?, 'dynamic', ?, 'application/json', 200, 1, CURRENT_TIMESTAMP, 'llm_cache')`,
-		fmt.Sprintf("dynamic_%s_%d", attackType, getCurrentUnixTimestamp()),
-		attackType,
-		payloadJSON,
-	)
-
-	if err != nil {
-		logging.Error("[PAYLOAD] Error caching payload to DB: %v", err)
-		return err
-	}
-
-	logging.Info("[PAYLOAD] Cached LLM-generated payload for: %s", attackType)
-	return nil
+	name := fmt.Sprintf("dynamic_%s_%d", attackType, getCurrentUnixTimestamp())
+	return pm.db.CachePayloadTemplate(name, attackType, payloadJSON)
 }
+
 
 // GetCacheStats returns cache statistics
 func (pm *PayloadManager) GetCacheStats() map[string]interface{} {
-	var totalPayloads, activeLLMPayloads int64
-
-	pm.db.QueryRow("SELECT COUNT(*) FROM payload_templates WHERE is_active = 1").Scan(&totalPayloads)
-	pm.db.QueryRow("SELECT COUNT(*) FROM payload_templates WHERE is_active = 1 AND created_by = 'llm_cache'").Scan(&activeLLMPayloads)
+	totalPayloads, activeLLMPayloads, _ := pm.db.GetPayloadCacheStats()
 
 	return map[string]interface{}{
 		"total_payloads":        totalPayloads,
@@ -313,6 +261,7 @@ func (pm *PayloadManager) GetCacheStats() map[string]interface{} {
 		"intel_injection_ready": true,
 	}
 }
+
 
 func getCurrentUnixTimestamp() int64 {
 	return 1730976294 // Nov 7, 2025

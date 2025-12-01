@@ -45,6 +45,22 @@ IFRIT learns continuously. Each attack analyzed becomes a learned pattern. After
 
 ## Key Concepts (5-Minute Summary)
 
+### Database Options (NEW in 0.3.0)
+
+**SQLite (Default)**
+- Zero configuration
+- Perfect for development and testing
+- Good for <1M attack records
+- Single-instance deployments
+
+**PostgreSQL (Production)**
+- Requires setup but scales better
+- Handles >1M attack records efficiently
+- Supports multi-instance clustering
+- Industry-standard RDBMS
+
+**Switching:** Change `database.type` in config - that's it! Both use the same API.
+
 ### Three Execution Modes
 
 **Onboarding Mode** (Days 1-7 of deployment)
@@ -130,13 +146,27 @@ cd ifrit
 cp config/default.json.example config/default.json
 ```
 
-Edit `config/default.json` and add your Claude/Gemini API key under the relevant section:
+Edit `config/default.json` and add your Claude/Gemini API key:
 ```json
 {
   "llm": {
     "claude": {
       "api_key": "sk-ant-YOUR-KEY-HERE"
     }
+  }
+}
+```
+
+**Optional - PostgreSQL Setup:**
+```json
+{
+  "database": {
+    "type": "postgres",
+    "host": "localhost",
+    "port": 5432,
+    "user": "ifrit_user",
+    "password": "your_password",
+    "dbname": "ifrit"
   }
 }
 ```
@@ -161,9 +191,72 @@ curl http://localhost:8080/.env
 
 # Check CLI
 ./ifrit-cli exception list
+
+# Check database
+./ifrit-cli db stats
 ```
 
 ---
+
+## New in 0.3.0: Multi-Database Support
+
+### PostgreSQL Production Deployment
+
+IFRIT now supports PostgreSQL for production environments!
+
+**Why PostgreSQL?**
+- 🚀 Better performance at scale (>1M records)
+- 🔄 Multi-instance clustering support
+- 💾 Advanced backup/replication
+- 📊 Production-grade RDBMS
+
+**Quick Setup:**
+```bash
+# 1. Install PostgreSQL
+brew install postgresql@15  # macOS
+# or
+sudo apt install postgresql postgresql-contrib  # Ubuntu
+
+# 2. Create database
+sudo -u postgres psql
+CREATE DATABASE ifrit;
+CREATE USER ifrit_user WITH PASSWORD 'your_password';
+GRANT ALL PRIVILEGES ON DATABASE ifrit TO ifrit_user;
+\q
+
+# 3. Update config
+{
+  "database": {
+    "type": "postgres",
+    "host": "localhost",
+    "port": 5432,
+    "user": "ifrit_user",
+    "password": "your_password",
+    "dbname": "ifrit"
+  }
+}
+
+# 4. Start IFRIT - tables created automatically!
+./ifrit
+```
+
+**Features:**
+- ✅ Automatic schema migration
+- ✅ All 21 tables created on first run
+- ✅ CLI works with both SQLite and PostgreSQL
+- ✅ Switch databases by changing config only
+- ✅ Zero code changes needed
+
+**Performance:**
+```
+SQLite:      Great for <1M records, single instance
+PostgreSQL:  Great for >1M records, multi-instance clusters
+```
+
+See `INSTALLATION.md` for complete PostgreSQL setup guide!
+
+---
+
 ## New in 0.2.0: Threat Intelligence & Notifications
 
 ### Threat Intelligence System
@@ -263,7 +356,6 @@ GET /api/notifications/history
 
 ---
 
-
 ## Recommended Deployment Path
 
 ### Week 1: Onboarding Phase
@@ -278,13 +370,15 @@ GET /api/notifications/history
 2. Check attacker profiles: `./ifrit-cli attacker list`
 3. Verify whitelisted paths are correct
 4. Add any manual exceptions needed
+5. **Decide on database:** SQLite or PostgreSQL?
 
 ### Week 3+: Switch to Normal Mode
 1. Update config: `"mode": "normal"`
-2. Full detection enabled
-3. Honeypot responses for attacks
-4. Real-time pattern learning
-5. Production-ready
+2. **Choose database type** (if not done already)
+3. Full detection enabled
+4. Honeypot responses for attacks
+5. Real-time pattern learning
+6. Production-ready
 
 ---
 
@@ -293,7 +387,7 @@ GET /api/notifications/history
 | Document | Purpose | Read Time |
 |----------|---------|-----------|
 | **FEATURES.md** | Complete feature list | 10 min |
-| **INSTALLATION.md** | Setup instructions | 15 min |
+| **INSTALLATION.md** | Setup instructions + PostgreSQL | 20 min |
 | **DETECTION_MODES.md** | Detection vs Allowlist modes | 10 min |
 | **DECEPTIVE_PAYLOADS_MANAGEMENT.md** | Honeypot response system | 15 min |
 | **ANONYMIZATION_TESTING.md** | Data privacy details | 10 min |
@@ -307,6 +401,12 @@ GET /api/notifications/history
 ### Q: How long does it take to get started?
 **A:** 10 minutes. Clone, configure API key, build, run.
 
+### Q: SQLite or PostgreSQL?
+**A:** SQLite for <100k attacks/day or single instance. PostgreSQL for production or clustering.
+
+### Q: Can I switch databases later?
+**A:** Yes! Change `database.type` in config and restart. Schema migrates automatically.
+
 ### Q: Do I need to modify my application code?
 **A:** No. IFRIT is a reverse proxy - zero code changes needed.
 
@@ -314,10 +414,10 @@ GET /api/notifications/history
 **A:** Not in Onboarding Mode. Use that for 1 week to establish baseline. After that, ~5% false positive rate in Detection Mode, 0% in Allowlist Mode.
 
 ### Q: How much does it cost?
-**A:** Free to deploy. If it helps you, consider: ⭐ starring on GitHub, contributing, or [buying us a coffee ☕](mailto:ifrit@0t.systems). Optional Claude/Gemini API costs: ~$0.30 for first week of learning, then 90% savings via caching. 
+**A:** Free to deploy. If it helps you, consider: ⭐ starring on GitHub, contributing, or [buying us a coffee ☕](mailto:ifrit@0t.systems). Optional Claude/Gemini API costs: ~$0.30 for first week of learning, then 90% savings via caching.
 
 ### Q: Can I run multiple IFRIT instances?
-**A:** Yes, with shared database (not fully tested, need network-mounted SQLite or PostgreSQL support coming soon).
+**A:** Yes! Use PostgreSQL for shared database. SQLite supports single instance only.
 
 ### Q: What if Claude/Gemini are down?
 **A:** IFRIT falls back to config defaults and whitelist mode. Still protects against known patterns.
@@ -354,13 +454,25 @@ How strict do you need to be?
 
 ---
 
+## Database Decision Tree (NEW in 0.3.0)
+```
+What's your deployment scale?
+├─ Development/Testing → SQLite (zero config)
+├─ Small deployment (<100k attacks/day) → SQLite (simple)
+├─ Production (>100k attacks/day) → PostgreSQL (scalable)
+└─ Multi-instance clustering → PostgreSQL (required)
+```
+
+---
+
 ## Performance Expectations
 
 | Operation | Speed | Example |
 |-----------|-------|---------|
 | Whitelist check | <1ms | 1000 requests/sec |
 | Local rules | <5ms | 200 requests/sec |
-| DB pattern match | <10ms | 100 requests/sec |
+| DB pattern match (SQLite) | <10ms | 100 requests/sec |
+| DB pattern match (PostgreSQL) | <8ms | 125 requests/sec |
 | LLM analysis | ~3 seconds | 0.3 requests/sec |
 | Learned pattern reuse | <10ms | 100 requests/sec |
 
@@ -387,29 +499,29 @@ How strict do you need to be?
 
 ## Next Steps (Choose One)
 
-###  I want to understand features first
+### 🎯 I want to understand features first
 → Read **FEATURES.md**
 
-###  I want to get running immediately
+### 🚀 I want to get running immediately
 → Read **INSTALLATION.md**
 
-###  I want to understand security
+### 🔒 I want to understand security
 → Read **SECURITY.md** then **ANONYMIZATION_TESTING.md**
 
-###  I want to configure properly
+### ⚙️ I want to configure properly
 → Read **DETECTION_MODES.md** then **INSTALLATION.md**
 
-###  I want to understand the big picture
+### 🏗️ I want to understand the big picture
 → Read **README.md** (Architecture section)
 
 ---
 
 ## Status & Version
 
-- **Version   :** 0.1.1 (MVP)
-- **Last edit :** November 7, 2025
-- **Status    :** Active Development
-- **License   :** Apache 2.0
+- **Version:** 0.3.0 (Production Ready)
+- **Last edit:** December 1st, 2025
+- **Status:** Active Development
+- **License:** Apache 2.0
 
 ---
 

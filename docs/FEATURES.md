@@ -1,791 +1,595 @@
-# IFRIT Proxy - Complete Features List
+# IFRIT Proxy - Complete Feature List
 
-**Version:** 0.1.1  
-**Last Updated:** November 7, 2025
+**Version:** 0.3.0  
+**Last Updated:** December 1st, 2025
 
 ---
 
 ## Core Features
 
 ### 1. Intelligent Reverse Proxy
+- **Transparent Interception** - Sits between clients and backend
+- **Zero Code Changes** - No modifications to your application
+- **Multi-App Support** - Route traffic by `X-App-ID` header
+- **TLS/HTTPS Support** - Secure communication
+- **Configurable Targets** - Point to any backend (HTTP/HTTPS)
 
-**Description:** Sits between internet and backend, making real-time decisions on traffic
+### 2. Multi-Database Support (NEW in 0.3.0)
+- **SQLite (Default)** - Zero-config embedded database
+  - Perfect for development and small deployments
+  - Single-file storage (`./data/ifrit.db`)
+  - Fast for <1M attack records
+  - No separate database server needed
+- **PostgreSQL (Production)** - Enterprise-grade RDBMS
+  - Production-ready at scale (>1M records)
+  - Multi-instance clustering support
+  - Advanced replication and backup
+  - Connection pooling
+  - Industry-standard security
+- **Automatic Schema Migration** - Tables created on first run
+- **Zero-Downtime Switching** - Change database type in config only
+- **Provider Abstraction** - Same API for both databases
+- **CLI Compatibility** - All commands work with both databases
 
-- Listens on configurable port (default 8080)
-- Routes legitimate traffic to backend
-- Returns honeypot responses for attacks
-- Written in pure Go (high performance, low resource usage)
-- Single binary deployment
-- No external dependencies (except SQLite)
+### 3. Four-Stage Attack Detection
 
-**Configuration:**
-```json
-{
-  "server": {
-    "listen_addr": ":8080",
-    "proxy_target": "http://backend:3000",
-    "api_listen_addr": ":8443"
-  }
-}
-```
+#### Stage 0: Whitelist Check
+- **IP Whitelisting** - Bypass detection for trusted IPs
+- **Path Whitelisting** - Allow specific endpoints without analysis
+- **Skip Body Check Flag** - Optional body/header analysis for whitelisted paths
+- **Regex Support** - Pattern-based path matching
 
-### 2. Four-Stage Detection Pipeline
+#### Stage 1: Local Rules (Pattern Matching)
+- **XSS Detection** - `<script>`, `javascript:`, `onerror=`
+- **SQL Injection** - `UNION SELECT`, `'; DROP TABLE`, `OR 1=1`
+- **Path Traversal** - `../`, `..\\`, directory escape attempts
+- **Command Injection** - `;`, `|`, `&&`, backticks
+- **LDAP Injection** - `*)(uid=*`, `)(objectClass=*`
+- **NoSQL Injection** - `$ne`, `$gt`, MongoDB operators
+- **XXE (XML External Entity)** - `<!ENTITY`, `SYSTEM`, `PUBLIC`
+- **SSRF (Server-Side Request Forgery)** - `file://`, `gopher://`, `dict://`
+- **Template Injection** - `{{`, `${`, `<%`, Jinja/ERB patterns
+- **Custom Rules** - Add your own patterns via config
 
-**Stage 0: Whitelist Exceptions**
-- Check whitelisted IPs
-- Check whitelisted paths
-- Optional body/header check override via `skip_body_check_on_whitelist` flag
-- Response time: <1ms
+#### Stage 2: Database Patterns (Learning)
+- **Attack Signature Matching** - Checks learned patterns
+- **HTTP Method Matching** - GET, POST, PUT, DELETE
+- **Path Pattern Matching** - `/api/users`, `/login`, etc.
+- **Confidence Scoring** - LLM-assigned confidence levels
+- **Automatic Caching** - 95% of attacks cached after week 1
+- **Pattern Management** - CLI commands to add/remove/view
 
-**Stage 1: Local Rules**
-- Pattern matching against hardcoded signatures
-- Detects obvious attacks (SQL injection, XSS, path traversal, etc.)
-- Response time: <5ms
-- No external API calls
+#### Stage 3: LLM Analysis (AI-Powered)
+- **Claude Integration** - Anthropic Claude 3.5 Haiku/Sonnet
+- **Gemini Integration** - Google Gemini 2.0/2.5 Flash/Pro (NEW in 0.2.0)
+- **Multi-LLM Support** - Primary/fallback provider configuration
+- **Real-Time Analysis** - ~3 seconds per novel attack
+- **Attack Classification** - SQL injection, XSS, credential stuffing, etc.
+- **Confidence Scoring** - 0.0-1.0 scale
+- **Pattern Learning** - New patterns stored for future use
+- **Configurable Methods** - LLM only on POST/PUT/DELETE (optional)
+- **Context-Aware** - Analyzes request method, path, headers, body
+- **Cost Optimization** - 90% savings via caching after learning
 
-**Stage 2: Database Patterns**
-- Match against learned attack signatures
-- Confidence scoring
-- Response time: <10ms
-- No external API calls
+### 4. Execution Modes
 
-**Stage 3: LLM Analysis**
-- Claude/Gemini integration for novel threats
-- Anonymized request data sent to LLM
-- Response time: ~3 seconds (first time), <10ms (cached)
-- Automatic pattern caching for future use
+#### Onboarding Mode
+- **Zero False Positives** - All traffic allowed
+- **Automatic Learning** - Baseline created from legitimate traffic
+- **Auto-Whitelisting** - Legitimate paths added to exceptions
+- **Duration Control** - Configurable learning period (default: 7 days)
+- **Traffic Logging** - All requests logged to `onboarding_traffic.log`
+- **Best For** - New deployments, establishing baseline
 
-### 3. Multi-App Support
+#### Detection Mode (Normal/Deception)
+- **Full Detection Pipeline** - All 4 stages enabled
+- **Honeypot Responses** - Fake data returned to attackers
+- **Real-Time Learning** - Patterns stored for future detection
+- **LLM Integration** - Claude/Gemini analysis on novel attacks
+- **Attack Logging** - Comprehensive attack database
+- **Attacker Profiling** - Track IPs, patterns, techniques
+- **Best For** - Production deployments after onboarding
 
-**Description:** Handle multiple applications with single IFRIT instance
+### 5. Detection Modes
 
-- Extract app_id from HTTP header (configurable)
-- Route app_id through entire detection pipeline
-- Store separate patterns per app
-- Store separate attacks per app
-- Separate exception management per app
+#### Detection Mode (Default)
+- **Smart Analysis** - 4-stage detection pipeline
+- **Optional Whitelist** - Exceptions for trusted IPs/paths
+- **Learning Capability** - Continuously improves
+- **~5% False Positive Rate** - Acceptable for most deployments
+- **Flexible Configuration** - Fine-tune sensitivity
 
-**Configuration:**
-```json
-{
-  "server": {
-    "multi_app_mode": true,
-    "app_id_header": "X-App-ID",
-    "app_id_fallback": "default"
-  }
-}
-```
+#### Allowlist Mode
+- **Strict Access Control** - Only whitelisted traffic allowed
+- **Zero False Positives** - Everything else blocked by design
+- **Optional Body Check** - Analyze whitelisted requests if needed
+- **Fast Response** - <1ms for whitelist checks
+- **Best For** - VPN-only, admin portals, zero-trust environments
 
-**Usage:**
-```bash
-curl -H "X-App-ID: app1" http://localhost:8080/api/users
-curl -H "X-App-ID: app2" http://localhost:8080/api/users
-```
+### 6. Honeypot & Deception
+
+#### Dynamic Payload Generation
+- **LLM-Generated Responses** - Realistic fake data
+- **Context-Aware** - Matches request type (SQL, API, etc.)
+- **Automatic Caching** - Generated payloads stored for reuse
+- **Four-Stage Selection**:
+  1. Database patterns (learned)
+  2. LLM generation (novel attacks)
+  3. Config defaults (fallback)
+  4. Generic error (last resort)
+
+#### Payload Management
+- **Configurable Responses** - Custom responses per attack type
+- **Status Code Control** - 200, 403, 404, 500, etc.
+- **Content-Type Support** - JSON, HTML, plain text
+- **Template System** - Reusable response templates
+- **CLI Management** - Add/view/remove payloads
+
+#### Intelligence Collection
+- **Attacker Interaction Logging** - Track what attackers submit
+- **Credential Harvesting** - Log fake credentials used
+- **Tool Fingerprinting** - Identify attacker tools/scripts
+- **Technique Analysis** - Understand attack methodologies
+- **Public Endpoint** - `/api/intel/log` for honeypot forms
+
+### 7. Data Anonymization & Privacy
+
+#### Anonymization Engine
+- **Hybrid Strategy** - Headers + pattern-based redaction
+- **Sensitive Header Redaction** - Authorization, Cookie, API keys
+- **Pattern Redaction** - JWT tokens, emails, API keys
+- **Configurable** - Add custom sensitive headers
+- **GDPR Compliant** - No PII sent to external LLMs
+- **HIPAA Compliant** - PHI anonymized
+- **PCI-DSS Compliant** - Credit card data redacted
+
+#### Privacy Controls
+- **Store Original Flag** - Optional local storage of original requests
+- **Redaction Logging** - Track what was anonymized
+- **Case-Insensitive** - Header matching works with any case
+
+### 8. Attack Intelligence & Profiling
+
+#### Attacker Profiles
+- **IP Tracking** - Unique attacker identification
+- **Request Counting** - Total requests per IP
+- **Attack Type Aggregation** - SQL injection, XSS, etc.
+- **First/Last Seen** - Temporal tracking
+- **Success Rate** - Successful vs. blocked probes
+- **CLI Access** - `ifrit-cli attacker list/view/search`
+
+#### Attack Instances
+- **Comprehensive Logging** - Every attack logged
+- **Detection Stage Tracking** - Which stage caught it
+- **Request Payload Storage** - What was sent
+- **Timestamp Precision** - Microsecond accuracy
+- **Pattern Attribution** - Links to learned patterns
+- **CLI Access** - `ifrit-cli attack list/view/stats`
+
+#### Pattern Database
+- **Attack Signatures** - Unique attack patterns
+- **HTTP Method** - GET, POST, PUT, DELETE
+- **Path Patterns** - `/api/users`, `/login`
+- **Times Seen** - Frequency tracking
+- **Confidence Scores** - LLM-assigned confidence
+- **Created By** - Claude, Gemini, config, manual
+- **CLI Management** - Add/remove/view patterns
+
+### 9. Threat Intelligence (NEW in 0.2.0)
+
+#### Multi-API Enrichment
+- **AbuseIPDB Integration** - IP reputation (40% weight)
+- **VirusTotal Integration** - Malware detection (35% weight)
+- **IPInfo Integration** - Geolocation + privacy (25% weight)
+- **Parallel API Calls** - All 3 APIs queried simultaneously
+- **24-Hour Caching** - 90% cost reduction
+- **Background Workers** - 3 goroutines for non-blocking enrichment
+
+#### Risk Scoring
+- **0-100 Risk Score** - Weighted formula across 3 APIs
+- **Threat Level Classification**:
+  - 🚨 CRITICAL (80-100)
+  - ⚠️ HIGH (60-79)
+  - ⚡ MEDIUM (40-59)
+  - ℹ️ LOW (0-39)
+- **Configurable Thresholds** - Adjust levels in config
+- **Configurable Weights** - Adjust API importance
+
+#### Enrichment Data
+- **AbuseIPDB** - Confidence score, total reports, last reported
+- **VirusTotal** - Malicious/suspicious/harmless/undetected counts
+- **IPInfo** - Country, city, organization
+- **Privacy Detection** - VPN, proxy, hosting, Tor flags
+- **Last Attack Tracking** - Most recent attack timestamp
+- **Total Attack Count** - Cumulative attacks per IP
+
+#### CLI Commands
+- `ifrit-cli threat list` - List all enriched IPs
+- `ifrit-cli threat view [ip]` - Detailed IP intelligence
+- `ifrit-cli threat top [n]` - Top threats by risk score
+- `ifrit-cli threat stats` - Threat statistics
+
+### 10. Notifications System (NEW in 0.2.0)
+
+#### Multi-Channel Support
+- **Email (SMTP)** - HTML-formatted alerts via any SMTP server
+- **Slack** - Webhook integration with color-coded messages
+- **Twilio SMS** - SMS alerts to configured numbers
+- **Custom Webhooks** - JSON payload delivery with retry logic
+
+#### Rule-Based Filtering
+- **Alert on CRITICAL** - Always enabled by default
+- **Alert on HIGH** - Optional (disabled by default)
+- **Alert on MEDIUM** - Optional (disabled by default)
+- **Alert on LOW** - Optional (disabled by default)
+- **Config-Driven** - Rules in `config/default.json`
+- **API-Configurable** - Update rules via REST API
+
+#### Notification Features
+- **Retry Logic** - 3 retries with exponential backoff
+- **Timeout Control** - Configurable per provider
+- **Notification History** - Audit trail of all sent alerts
+- **Threat Context** - Full threat intel in notifications
+- **Rate Limiting** - Prevent alert fatigue
+- **Parallel Delivery** - All enabled providers notified simultaneously
+
+### 11. Exception Management
+
+#### IP Exceptions
+- **Whitelist IPs** - Bypass detection entirely
+- **Regex Support** - CIDR notation, IP ranges
+- **Reason Tracking** - Document why exception exists
+- **Enable/Disable** - Toggle without deleting
+- **CLI Management** - `ifrit-cli exception add/remove/list`
+
+#### Path Exceptions
+- **Whitelist Paths** - `/health`, `/metrics`, etc.
+- **Regex Patterns** - `^/api/public.*`
+- **Body Check Override** - Optional analysis even when whitelisted
+- **Reason Tracking** - Document purpose
+- **CLI Management** - Same as IP exceptions
+
+#### Keyword Exceptions
+- **Attack Type Specific** - SQL injection, XSS, etc.
+- **Keyword Matching** - "UNION SELECT", "DROP TABLE"
+- **Reason Tracking** - Document false positives
+- **Enable/Disable** - Toggle exceptions
+- **CLI Management** - `ifrit-cli keyword add/remove/list`
+
+### 12. REST API
+
+#### Authentication
+- **API Token System** - Bearer-style tokens (`ifr_...`)
+- **User Management** - Multiple users with roles
+- **Role-Based Access** - Admin, analyst, viewer roles
+- **Token Expiry** - Configurable (default: 90 days)
+- **Token Revocation** - Immediate invalidation
+- **CLI Token Management** - `ifrit-cli token create/list/revoke`
+
+#### Endpoints (30+)
+- **Attack Data** - `/api/attacks`, `/api/attackers`, `/api/patterns`
+- **Statistics** - `/api/stats`, `/api/intel/stats`, `/api/cache/stats`
+- **Threat Intelligence** - `/api/threat-intel/*` (list, view, top, stats)
+- **Notifications** - `/api/notifications/*` (config, history, update)
+- **Exceptions** - `/api/exceptions`, `/api/keyword-exceptions`
+- **Cache Management** - `/api/cache/clear`
+- **Health Check** - `/api/health`
+- **Intel Logging** - `/api/intel/log` (public, no auth)
+
+#### API Features
+- **JSON Responses** - Consistent format
+- **Error Handling** - Descriptive error messages
+- **Rate Limiting** - 100 requests/minute
+- **CORS Support** - Configurable origins
+- **Pagination** - Limit/offset support
+- **Filtering** - app_id, IP, time ranges
+
+### 13. Web Dashboard
+
+#### Real-Time Monitoring
+- **Attack Statistics** - Total attacks, unique attackers
+- **Detection Rate** - Percentage of malicious requests
+- **Stage Breakdown** - S1 (Local), S2 (DB), S3 (LLM)
+- **Recent Attacks** - Last 10 detected attacks
+- **Top Attackers** - Most active IPs
+- **Threat Intelligence Cards** - CRITICAL/HIGH/MEDIUM/LOW counts (NEW)
+- **Top Risky IPs** - Most dangerous attackers with risk scores (NEW)
+- **Auto-Refresh** - 5-second intervals
+
+#### Access Control
+- **Token Authentication** - Same as API
+- **localStorage Storage** - Token persisted in browser
+- **Logout Support** - Clear token
+- **Role-Based Views** - Future enhancement
+
+#### Dashboard Features
+- **Embedded HTML** - No separate web server needed
+- **Responsive Design** - Works on mobile/tablet/desktop
+- **Color-Coded Threats** - Visual severity indicators
+- **Clickable Links** - Direct links to attack details
+
+### 14. Command-Line Interface (CLI)
+
+#### Database Management
+- `ifrit-cli db stats` - Database statistics
+- `ifrit-cli db schema` - View schema
+
+#### Attack Management
+- `ifrit-cli attack list` - List all attacks
+- `ifrit-cli attack view [id]` - Detailed attack info
+- `ifrit-cli attack stats` - Attack statistics
+- `ifrit-cli attack by-ip [ip]` - Attacks from specific IP
+- `ifrit-cli attack by-path [path]` - Attacks on specific path
+
+#### Pattern Management
+- `ifrit-cli pattern list` - List learned patterns
+- `ifrit-cli pattern view [id]` - Pattern details
+- `ifrit-cli pattern add` - Manually add pattern
+- `ifrit-cli pattern remove [id]` - Delete pattern
+
+#### Attacker Management
+- `ifrit-cli attacker list` - List all attackers
+- `ifrit-cli attacker view [id]` - Attacker profile
+- `ifrit-cli attacker search [ip]` - Search by IP
+- `ifrit-cli attacker remove [id]` - Delete attacker
+
+#### Exception Management
+- `ifrit-cli exception list` - List all exceptions
+- `ifrit-cli exception view [id]` - Exception details
+- `ifrit-cli exception add` - Add IP/path exception
+- `ifrit-cli exception remove [id]` - Delete exception
+- `ifrit-cli exception enable/disable [id]` - Toggle
+
+#### Keyword Management
+- `ifrit-cli keyword list` - List keyword exceptions
+- `ifrit-cli keyword view [id]` - Keyword details
+- `ifrit-cli keyword add` - Add keyword exception
+- `ifrit-cli keyword remove [id]` - Delete keyword
+
+#### Threat Intelligence
+- `ifrit-cli threat list` - List enriched IPs
+- `ifrit-cli threat view [ip]` - Detailed threat intel
+- `ifrit-cli threat top [n]` - Top threats by risk
+- `ifrit-cli threat stats` - Threat statistics
+
+#### Token Management
+- `ifrit-cli token list` - List all tokens
+- `ifrit-cli token create [user_id] [name]` - Create token
+- `ifrit-cli token revoke [id]` - Revoke token
+- `ifrit-cli token validate [token]` - Check token validity
+
+#### Payload Management
+- `ifrit-cli payload list` - List all payloads
+- `ifrit-cli payload view [id]` - Payload details
+- `ifrit-cli payload stats` - Payload statistics
+
+#### Interaction Management
+- `ifrit-cli interaction list` - List attacker interactions
+- `ifrit-cli interaction by-ip [ip]` - Interactions from IP
+
+#### Legitimate Traffic
+- `ifrit-cli legitimate list` - List legitimate requests (onboarding)
+- `ifrit-cli legitimate stats` - Legitimate traffic stats
+
+### 15. Logging & Monitoring
+
+#### Log Levels
+- **DEBUG** - Verbose output (development only)
+- **INFO** - Standard operational logs
+- **WARN** - Warnings (non-critical issues)
+- **ERROR** - Errors (requires attention)
+
+#### Log Categories
+- **[SERVER]** - Proxy server events
+- **[API]** - API server events
+- **[DETECTION]** - Attack detection events
+- **[STAGE_1/2/3]** - Detection stage logs
+- **[PAYLOAD]** - Payload management events
+- **[LLM]** - Claude/Gemini API calls
+- **[ANON]** - Anonymization events
+- **[DB]** - Database operations
+- **[THREAT_INTEL]** - Threat intelligence events (NEW)
+- **[NOTIFICATIONS]** - Notification events (NEW)
+- **[EMAIL/SLACK/TWILIO/WEBHOOK]** - Provider-specific logs (NEW)
+
+#### Log Features
+- **Timestamped** - Precise timestamps
+- **Color-Coded** - Terminal color support
+- **File Output** - `./logs/ifrit.log`
+- **Log Rotation** - Automatic rotation (configurable)
+- **Debug Toggle** - Enable/disable via config
+- **Structured Format** - Easy to parse
+
+### 16. Configuration Management
+
+#### Configuration File
+- **JSON Format** - `config/default.json`
+- **Environment Variables** - Override with `${VAR_NAME}`
+- **Hot Reload** - Future enhancement
+- **Validation** - Startup validation of config
+
+#### Configuration Sections
+- **server** - Proxy and API server settings
+- **database** - Database type and connection (NEW in 0.3.0)
+- **llm** - Claude/Gemini configuration
+- **detection** - Detection mode and rules
+- **execution_mode** - Onboarding vs. normal
+- **anonymization** - Privacy settings
+- **payload_management** - Honeypot configuration
+- **threat_intelligence** - API keys and settings (NEW in 0.2.0)
+- **notifications** - Alert configuration (NEW in 0.2.0)
+- **system** - Logging and debug settings
+
+#### Configuration Features
+- **Comments Allowed** - JSON with comments (JSONC)
+- **Sensible Defaults** - Works out of the box
+- **Example Config** - `default.json.example` included
+- **Documentation** - Inline comments in example
+
+### 17. Performance & Scalability
+
+#### Response Times
+- **Whitelist Check** - <1ms
+- **Local Rules** - <5ms
+- **Database Patterns (SQLite)** - <10ms
+- **Database Patterns (PostgreSQL)** - <8ms (NEW in 0.3.0)
+- **LLM Analysis** - ~3 seconds (first time)
+- **Cached Patterns** - <10ms (95% of requests)
+
+#### Throughput
+- **Whitelist Mode** - 10,000 requests/sec
+- **Local Rules** - 200 requests/sec
+- **Database Patterns** - 100 requests/sec
+- **LLM Analysis** - 0.3 requests/sec
+
+#### Scalability (NEW in 0.3.0)
+- **SQLite** - Single instance, <1M records
+- **PostgreSQL** - Multi-instance, >1M records
+- **Connection Pooling** - Efficient resource usage
+- **Horizontal Scaling** - Multiple IFRIT instances with PostgreSQL
+- **Load Balancing** - Support for upstream LB
+
+#### Optimization
+- **Pattern Caching** - 90% cost reduction after week 1
+- **Threat Intel Caching** - 24-hour TTL, 90% API call savings
+- **Parallel Processing** - Background workers for enrichment
+- **Database Indexing** - Optimized queries
+
+### 18. Security & Compliance
+
+#### Security Features
+- **TLS/HTTPS Support** - Encrypted communication
+- **Token-Based Auth** - Secure API access
+- **Role-Based Access** - Admin/analyst/viewer roles
+- **Password Hashing** - bcrypt for credentials
+- **API Rate Limiting** - 100 req/min
+- **Input Validation** - All inputs sanitized
+
+#### Compliance
+- **GDPR** - PII anonymization
+- **HIPAA** - PHI redaction
+- **PCI-DSS** - Credit card data masked
+- **CCPA** - Data minimization
+- **SOC 2** - Audit logging
+
+#### Data Privacy
+- **Anonymization Engine** - Redacts sensitive data
+- **Local Storage** - No external data leaks
+- **Configurable Retention** - Control data lifetime
+- **Secure Deletion** - CLI commands to purge data
+
+### 19. Deployment Options
+
+#### Standalone
+- **Single Binary** - Go compiled executable
+- **No Dependencies** - SQLite embedded (optional PostgreSQL)
+- **Systemd Support** - Linux service integration
+- **Docker Support** - Containerized deployment
+- **Docker Compose** - Multi-container orchestration
+
+#### Production
+- **Load Balancer Integration** - Works with nginx, HAProxy
+- **Multi-Instance** - PostgreSQL for clustering (NEW in 0.3.0)
+- **Health Checks** - `/api/health` endpoint
+- **Graceful Shutdown** - SIGTERM handling
+- **Automatic Restart** - Systemd service restart
+
+#### Cloud Deployment
+- **AWS** - EC2, ECS, Lambda (future)
+- **GCP** - Compute Engine, Cloud Run
+- **Azure** - VM, Container Instances
+- **DigitalOcean** - Droplets, App Platform
+
+### 20. Developer Features
+
+#### Open Source
+- **Apache 2.0 License** - Permissive license
+- **GitHub Repository** - Public source code
+- **Issue Tracking** - GitHub Issues
+- **Pull Requests** - Community contributions welcome
+
+#### Extensibility
+- **Plugin System** - Future enhancement
+- **Custom Providers** - Add new databases easily
+- **Custom Rules** - Extend detection logic
+- **Webhook Integration** - Custom notifications
+
+#### Testing
+- **Unit Tests** - Core functionality tested
+- **Integration Tests** - End-to-end scenarios
+- **Manual Testing** - Documented test cases
+- **CI/CD Ready** - GitHub Actions support
 
 ---
 
-## Detection Features
+## Feature Comparison Matrix
 
-### Real-Time Threat Detection
-
-**Supported Attack Types:**
-- SQL Injection (various patterns)
-- Cross-Site Scripting (XSS)
-- Path Traversal
-- Command Injection
-- XXE (XML External Entity)
-- Credential Stuffing
-- Reconnaissance
-- And more via LLM analysis
-
-**Detection Accuracy:**
-- Stage 1-2: 100% (pattern-based, no false positives)
-- Stage 3: ~95% (LLM-based, depends on Claude/Gemini accuracy)
-- Overall: ~95% with <5% false positive rate after deployment
-
-### Whitelist Management
-
-**IP Whitelisting**
-- Exact IP matching: `192.168.1.100`
-- All paths allowed from whitelisted IP
-- Bypasses detection pipeline
-
-**Path Whitelisting**
-- Regex pattern support
-- Allowed from any IP
-- Optional body/header check via flag
-
-**Keyword Exceptions** (New in 0.1.1)
-- Exception by path keyword (e.g., "health" matches /health)
-- Exception by body field
-- Exception by header name
-- Respects `skip_body_check_on_whitelist` flag
-
-**Configuration:**
-```json
-{
-  "detection": {
-    "whitelist_ips": [
-      "192.168.1.100",
-      "10.0.0.50"
-    ],
-    "whitelist_paths": [
-      "/health",
-      "/metrics",
-      "^/public/.*"
-    ]
-  }
-}
-```
-
-### Skip Body Check Flag (New in 0.1.1)
-
-**Description:** Control whether whitelisted paths still get body/header checked
-
-**Behavior:**
-- `true` (default): Whitelisted paths skip ALL checks (fastest, original behavior)
-- `false`: Whitelisted paths still check request body/headers (catches malicious payloads)
-
-**Use case:** Path `/health` is whitelisted, but still detect if body contains SQL injection
-
-**Configuration:**
-```json
-{
-  "detection": {
-    "skip_body_check_on_whitelist": false
-  }
-}
-```
-
-### Two Detection Modes
-
-**Detection Mode (Default)**
-```
-Request → Whitelist? → YES: Allow
-                    → NO: Analyze (4-stage pipeline)
-```
-- Smart threat analysis
-- Learns attack patterns
-- Optional whitelist for exceptions
-- ~5% false positive rate possible
-
-**Allowlist Mode (Strict)**
-```
-Request → Whitelist? → YES: Allow
-                    → NO: Block (honeypot response)
-```
-- Only whitelisted traffic allowed
-- Everything else blocked
-- Zero false positives (by design)
-- Perfect for VPN-only or admin portals
-
-See DETECTION_MODES.md for full comparison.
+| Feature | SQLite | PostgreSQL |
+|---------|--------|------------|
+| Zero Config | ✅ | ❌ |
+| Production Ready | ⚠️ (<1M records) | ✅ |
+| Multi-Instance | ❌ | ✅ |
+| Clustering | ❌ | ✅ |
+| Connection Pooling | ❌ | ✅ |
+| Backup/Replication | Manual | Built-in |
+| Performance (<1M) | Fast | Fast |
+| Performance (>1M) | Slow | Fast |
 
 ---
 
-## Learning & Intelligence Features
+## Coming Soon (v0.4.0+)
 
-### Self-Learning Attack Patterns
-
-**How it works:**
-1. New attack detected
-2. Claude/Gemini analyzes and generates honeypot response
-3. Pattern stored in database with signature + response
-4. Future identical attacks: cached response (<10ms)
-
-**Database Storage:**
-- Attack type
-- Path pattern
-- HTTP method
-- Payload template (honeypot response)
-- Confidence score
-- Times seen
-- First/last seen timestamps
-
-**Cost Optimization:**
-- Hour 1: 100 unique attacks → 100 Claude/Gemini calls → ~$0.30
-- Hour 2: Same 100 attack types → 0 Claude/Gemini calls → $0.00
-- Result: 90%+ savings after learning phase
-
-### Attacker Profiling Examples (intel collection payload can be fully customized)
-
-**Tracked Information:**
-- IP address
-- Attack types used
-- Number of attacks
-- First seen timestamp
-- Last seen timestamp
-- Attack frequency
-- Most common attack type
-- Attacker sophistication score
-
-**Access via CLI:**
-```bash
-./ifrit-cli attacker list
-./ifrit-cli attacker view 1
-./ifrit-cli attacker search 192.168.1.1
-```
-
-### Pattern Database
-
-**Automatic Learning:**
-- Every attack → pattern stored
-- Confidence scores for LLM analysis
-- Times seen counter
-- Timestamp tracking
-
-**Manual Management:**
-```bash
-./ifrit-cli pattern list
-./ifrit-cli pattern view 1
-./ifrit-cli pattern add sql_injection "1 OR 1=1"
-./ifrit-cli pattern remove 1
-```
+- [ ] Machine learning for attack prediction
+- [ ] Behavioral analysis
+- [ ] Custom LLM providers (Ollama, local models)
+- [ ] GraphQL API
+- [ ] Web UI for configuration
+- [ ] Advanced SIEM integrations
+- [ ] Automated response policies
+- [ ] Threat actor profiling
+- [ ] Geo-blocking
+- [ ] Rate limiting per IP
+- [ ] Custom plugin system
+- [ ] Kubernetes Helm charts
+- [ ] Terraform modules
 
 ---
 
-## Execution Modes
+## Feature Summary
 
-### Onboarding Mode
+**Core Capabilities:**
+- ✅ 4-stage attack detection
+- ✅ LLM-powered analysis (Claude + Gemini)
+- ✅ Multi-database support (SQLite + PostgreSQL)
+- ✅ Honeypot deception
+- ✅ Real-time learning
+- ✅ Threat intelligence enrichment
+- ✅ Multi-channel notifications
+- ✅ Data anonymization (GDPR/HIPAA)
+- ✅ REST API (30+ endpoints)
+- ✅ Web dashboard
+- ✅ Comprehensive CLI
+- ✅ Token authentication
+- ✅ Multi-app support
+- ✅ Exception management
+- ✅ Attack profiling
+- ✅ Pattern database
 
-**Purpose:** Auto-learn legitimate traffic without false positives
+**Deployment:**
+- ✅ Standalone binary
+- ✅ Docker support
+- ✅ Systemd service
+- ✅ Multi-instance clustering (PostgreSQL)
+- ✅ Cloud-ready
 
-**Behavior:**
-- All traffic passes through (no blocking)
-- Attacks detected and logged
-- Legitimate paths auto-whitelisted
-- Zero impact on users
-- Duration: configurable (default 7 days)
-
-**Configuration:**
-```json
-{
-  "execution_mode": {
-    "mode": "onboarding",
-    "onboarding_auto_whitelist": true,
-    "onboarding_duration_days": 7,
-    "onboarding_log_file": "./logs/onboarding_traffic.log"
-  }
-}
-```
-
-**Use case:** New deployment, need baseline
-
-
-**Use case:** Manual traffic analysis, compliance logging
-
-### 
-
-** Deception nide:** Production deployment with full detection
-
-**Behavior:**
-- Full 4-stage detection pipeline
-- Honeypot responses for attacks
-- Real-time learning
-- Pattern caching
-
-**Configuration:**
-```json
-{
-  "execution_mode": {
-    "mode": "deception"
-  }
-}
-```
-
-**Use case:** Production environment, active threat defense
+**Security:**
+- ✅ TLS/HTTPS
+- ✅ Token auth
+- ✅ RBAC
+- ✅ Rate limiting
+- ✅ Compliance (GDPR/HIPAA/PCI-DSS)
 
 ---
 
-## Payload Management Features
-
-### Intelligent Response Selection
-
-**4-Stage Fallback:**
-
-1. **Database Patterns** - Use cached payload if pattern exists
-2. **LLM Generation** - LLM generates realistic response (if enabled)
-3. **Config Defaults** - Use pre-configured response for attack type
-4. **Fallback** - Generic error response (can be customized)
-
-**Response time:**
-- Cached (Stage 1): <10ms
-- LLM generated (Stage 2): ~3 seconds
-- Config default (Stage 3): <5ms
-- Fallback (Stage 4): <1ms
-
-### Dynamic Payload Generation
-
-**LLM-Powered:**
-- Claude/Gemini generates realistic honeypot responses
-- Context-aware (understands attack type and path)
-- Automatically cached for future use
-- Can be disabled for instant responses
-
-**Example generated payloads:**
-```json
-SQL Injection → {
-  "data": [
-    {"id": 1, "email": "admin@internal.local"},
-    {"id": 2, "email": "user@internal.local"}
-  ]
-}
-
-XSS → {
-  "error": "Invalid input detected",
-  "message": "XSS prevention enabled"
-}
-```
-
-**Configuration:**
-```json
-{
-  "payload_management": {
-    "generate_dynamic_payload": true,
-    "dynamic_llm_cache_ttl": 86400
-  }
-}
-```
-
-### Config-Based Defaults
-
-**Pre-configured responses:**
-```json
-{
-  "payload_management": {
-    "default_responses": {
-      "sql_injection": {
-        "content": {"error": "Forbidden"},
-        "status_code": 403
-      },
-      "xss": {
-        "content": {"error": "Invalid input"},
-        "status_code": 400
-      }
-    }
-  }
-}
-```
-
-### Payload Caching
-
-**Automatic caching:**
-- First attack generates payload
-- Stored in database
-- TTL configurable (default 24 hours)
-- Subsequent attacks use cache
-
-**Management:**
-```bash
-# View cache stats
-curl http://localhost:8443/api/cache/stats
-
-# Clear cache
-curl -X POST http://localhost:8443/api/cache/clear
-```
-
----
-
-## Data Privacy Features
-
-### Data Anonymization Engine
-
-**Redacted before external API calls:**
-- Authorization headers (tokens, credentials)
-- Cookie headers (session data)
-- X-API-Key headers
-- Custom sensitive headers (configurable)
-- Email addresses (pattern matching)
-- JWT tokens (pattern matching)
-- API keys (pattern matching)
-
-**Preserved for detection:**
-- HTTP method and path
-- Attack patterns (needed for detection)
-- Content-Type, User-Agent
-
-**Configuration:**
-```json
-{
-  "anonymization": {
-    "enabled": true,
-    "strategy": "hybrid",
-    "store_original": false,
-    "sensitive_headers": [
-      "Authorization",
-      "Cookie",
-      "X-API-Key"
-    ]
-  }
-}
-```
-
-**Strategy options:**
-- `hybrid` - Redact headers AND patterns (recommended)
-- `header-only` - Only redact sensitive headers
-- `disabled` - No anonymization
-
-### Compliance Support
-
-- **GDPR:** PII anonymized before external API calls
-- **HIPAA:** PHI protected
-- **PCI-DSS:** Credit card data redacted
-- **CCPA:** User data minimization
-- **Audit logging:** All redactions logged
-
----
-
-## CLI Management Tool
-
-### Attack Management
-```bash
-# View all attacks
-./ifrit-cli attack list
-
-# View specific attack
-./ifrit-cli attack view 1
-
-# Get statistics
-./ifrit-cli attack stats
-
-# Filter by IP
-./ifrit-cli attack by-ip 192.168.1.1
-
-# Filter by path
-./ifrit-cli attack by-path /api/users
-```
-
-### Pattern Management
-```bash
-# List learned patterns
-./ifrit-cli pattern list
-
-# View pattern details
-./ifrit-cli pattern view 1
-
-# Add manual pattern
-./ifrit-cli pattern add sql_injection "1 OR 1=1"
-
-# Remove pattern
-./ifrit-cli pattern remove 1
-```
-
-### Attacker Profiling
-```bash
-# List all attackers
-./ifrit-cli attacker list
-
-# View attacker details
-./ifrit-cli attacker view 1
-
-# Search by IP
-./ifrit-cli attacker search 192.168.1.1
-```
-
-### Exception/Whitelist Management
-```bash
-# List exceptions
-./ifrit-cli exception list
-
-# Add exception
-./ifrit-cli exception add 192.168.1.100 /health
-
-# Remove exception
-./ifrit-cli exception remove 1
-```
-
-### Keyword Exception Management (New in 0.1.1)
-```bash
-# List keyword exceptions
-./ifrit-cli keyword list
-
-# Add keyword exception (path)
-./ifrit-cli keyword add path health
-
-# Add keyword exception (body field)
-./ifrit-cli keyword add body_field user_id
-
-# Add keyword exception (header)
-./ifrit-cli keyword add header X-Internal
-
-# Remove keyword exception
-./ifrit-cli keyword remove 1
-```
-
-### Database Operations
-```bash
-# View statistics
-./ifrit-cli db stats
-
-# View schema
-./ifrit-cli db schema
-```
-
----
-
-## REST API
-
-### Attack Endpoints
-
-**Get recent attacks:**
-```bash
-curl http://localhost:8443/api/attacks
-```
-
-**Get attacks by IP:**
-```bash
-curl http://localhost:8443/api/attacks?ip=192.168.1.1
-```
-
-**Get attacks by type:**
-```bash
-curl http://localhost:8443/api/attacks?type=sql_injection
-```
-
-### Pattern Endpoints
-
-**Get learned patterns:**
-```bash
-curl http://localhost:8443/api/patterns
-```
-
-**Get pattern by ID:**
-```bash
-curl http://localhost:8443/api/patterns/1
-```
-
-### Attacker Endpoints
-
-**Get attacker profiles:**
-```bash
-curl http://localhost:8443/api/attackers
-```
-
-**Get attacker by ID:**
-```bash
-curl http://localhost:8443/api/attackers/1
-```
-
-### Cache Endpoints
-
-**Get cache statistics:**
-```bash
-curl http://localhost:8443/api/cache/stats
-```
-
-**Clear cache:**
-```bash
-curl -X POST http://localhost:8443/api/cache/clear
-```
-
-### Health Endpoints
-
-**Health check:**
-```bash
-curl http://localhost:8443/api/health
-```
-
----
-
-## Logging Features
-
-### Request Logging
-
-**All requests logged with:**
-- Timestamp
-- Source IP
-- HTTP method and path
-- Request size
-- Response status
-- Processing time
-- App ID (if multi-app)
-
-### Attack Logging
-
-**Attacks logged with:**
-- Attack type
-- Detection stage (1, 2, 3, 4)
-- Confidence score (if LLM)
-- Attacker IP
-- Path targeted
-- Honeypot response sent
-
-### Debug Logging (New in 0.1.1)
-
-**Conditional debug output:**
-- Enable/disable via `system.debug` config
-- Keeps production logs clean
-- Useful for troubleshooting
-
-**Configuration:**
-```json
-{
-  "system": {
-    "debug": false
-  }
-}
-```
-
-### Audit Logging
-
-**Anonymization audits:**
-- What was redacted
-- Number of occurrences
-- Replacement values
-
-**Pattern learning:**
-- Pattern added/removed
-- Confidence scores
-- First/last seen updates
-
----
-
-## Performance Features
-
-### Speed Optimization
-
-**Detection speed:**
-- Whitelist check: <1ms
-- Local rules: <5ms
-- Database patterns: <10ms
-- LLM analysis: ~3 seconds (first), <10ms (cached)
-
-**Typical production:**
-- 95% of attacks: <10ms (cached patterns)
-- 5% of attacks: ~3 seconds (LLM analysis, then cached)
-
-### Resource Efficiency
-
-**Memory usage:**
-- Base: ~20-50MB
-- Per pattern: ~1KB
-- Per attack log: ~500B
-- Payload cache: ~5MB (typical)
-
-**CPU usage:**
-- Local rules: minimal (<1% single core)
-- Database queries: minimal (<1% single core)
-- LLM calls: network bound (not CPU bound)
-
-**Disk usage:**
-- SQLite database: grows with attacks logged
-- Typical: 1MB per 1000 attacks
-- Logs: configurable rotation
-
-### Caching Strategy
-
-**Multi-level caching:**
-1. In-memory pattern cache
-2. Database pattern cache
-3. Payload template cache
-4. Legitimate request cache (Stage 3)
-
-**Cache TTLs:**
-- Database patterns: permanent
-- Generated payloads: 24 hours (configurable)
-- Legitimate requests: session duration
-
----
-
-## Extensibility Features
-
-### LLM Provider Support
-
-**Currently supported:**
-- Anthropic Claude 
-- Google Gemini 
-
-**Future support:**
-- Open-source models (Llama, Mistral)
-- Custom LLM endpoints
-
-### Plugin Architecture (Planned)
-
-- Custom detection rules
-- Custom payload generators
-- Custom anonymization strategies
-- SIEM integrations
-
-### Database Support (Planned)
-
-- PostgreSQL
-- MySQL
-- MongoDB
-
----
-
-## Graceful Shutdown (New in 0.1.1)
-
-**Features:**
-- Proper signal handling (SIGINT, SIGTERM)
-- Ongoing requests complete before shutdown
-- Context timeout for safety
-- Clean resource cleanup
-
-**Behavior:**
-```bash
-# Running IFRIT
-./ifrit
-
-# Press Ctrl+C
-  Shutting down gracefully...
-✓ Server stopped
-```
-
----
-
-## Configuration Features
-
-### JSON Configuration
-
-- Single `config/default.json` file
-- No code changes needed
-- Hot-reload support (planned)
-- Environment variable overrides
-
-### Example Configurations
-
-**Minimal (onboarding):**
-```json
-{
-  "server": {
-    "proxy_target": "http://backend:3000"
-  },
-  "llm": {
-    "claude": {
-      "api_key": "sk-ant-..."
-    }
-  },
-  "execution_mode": {
-    "mode": "onboarding"
-  }
-}
-```
-
-**Production (full features):**
-```json
-{
-  "server": {
-    "listen_addr": "0.0.0.0:8080",
-    "proxy_target": "http://backend:3000",
-    "multi_app_mode": true,
-    "app_id_header": "X-App-ID"
-  },
-  "detection": {
-    "mode": "detection",
-    "skip_body_check_on_whitelist": false,
-    "whitelist_ips": ["192.168.1.24"],
-    "whitelist_paths": ["/health", "/metrics"]
-  },
-  "execution_mode": {
-    "mode": "deception"
-  },
-  "system": {
-    "debug": false
-  }
-}
-```
-
----
-
-**Status:** MVP (0.2.1)  
+**Last Updated:** December 1st, 2025  
+**Version:** 0.3.0

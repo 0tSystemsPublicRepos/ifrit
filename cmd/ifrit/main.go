@@ -50,7 +50,21 @@ func main() {
 	log.Println("\n\n                                                                             \n        ø       æææææææææææææææ  <æææææææææææææ     æææææ  ¤æææææææææææææææ  \n        øø      æ             æ  <æ            ææ   æ  ææ  ¤æ            \"æ  \n       øøø      æ  ææææææææææææ  <ææææææææææææ ææ   æ  ææ  ¤ææææææh æø ææææ  \n     <øøø  ø    æ  æø                         ææ    æ  ææ        æh æø       \n   ¤øøøø  øø    æ  ¤¤¤¤¤¤¤¤¤<    <æ/</<<<<<<¤‚      æ  ææ        æh æø       \n  \"øøø‚ åøå C   æ  æø            <æ \"ææææææ  æ‚     æ  ææ        æy æø       \n   øøø  ø  Cø   æ  æø            <æ \"æ    ææ  æ     æ            æy æø       \n    hø< \"¤ø     ææææø            <ææææ     æææææÐ   æææææ        ææææø       \n                                                                             \n                Author : Mehdi T - ifrit@0t.systems\n\t\tVersion: 0.2.1                                                     \n                                                                             ")
 
 	log.Printf("Configuration loaded\n")
-	log.Printf("Database: %s (type: %s)\n", cfg.Database.SQLite.Path, cfg.Database.Type)
+	log.Printf("Database type: %s\n", cfg.Database.Type)
+	
+	// Display database-specific connection info
+	switch cfg.Database.Type {
+	case "sqlite":
+		log.Printf("Database path: %s\n", cfg.Database.SQLite.Path)
+	case "postgres", "postgresql":
+		log.Printf("Database: %s@%s:%d/%s\n", 
+			cfg.Database.PostgreSQL.Username,
+			cfg.Database.PostgreSQL.Host,
+			cfg.Database.PostgreSQL.Port,
+			cfg.Database.PostgreSQL.Database,
+		)
+	}
+	
 	log.Printf("Proxy target: %s\n", cfg.Server.ProxyTarget)
 	log.Printf("LLM Provider: %s\n", cfg.LLM.Primary)
 	log.Printf("Execution Mode: %s\n", cfg.ExecutionMode.Mode)
@@ -61,14 +75,46 @@ func main() {
 	}
 	log.Println()
 
-	// Initialize database
-	log.Println("Initializing database...")
-	db, err := database.InitializeDatabase(cfg.Database.SQLite.Path)
+	// ============================================================
+	// STEP 3: Initialize database using provider factory
+	// ============================================================
+	log.Printf("Initializing database (%s)...\n", cfg.Database.Type)
+	
+	factory := &database.ProviderFactory{}
+	var dbProvider database.DatabaseProvider
+	
+	switch cfg.Database.Type {
+	case "sqlite":
+		dbProvider, err = factory.Create("sqlite", &database.SQLiteConfig{
+			Path:        cfg.Database.SQLite.Path,
+			JournalMode: cfg.Database.SQLite.JournalMode,
+			Synchronous: cfg.Database.SQLite.Synchronous,
+		})
+	case "postgres", "postgresql":
+		dbProvider, err = factory.Create("postgres", &database.PostgresConfig{
+			Host:           cfg.Database.PostgreSQL.Host,
+			Port:           cfg.Database.PostgreSQL.Port,
+			User:           cfg.Database.PostgreSQL.Username,
+			Password:       cfg.Database.PostgreSQL.Password,
+			Database:       cfg.Database.PostgreSQL.Database,
+			SSLMode:        cfg.Database.PostgreSQL.SSLMode,
+			MaxConnections: cfg.Database.PostgreSQL.MaxConnections,
+		})
+	default:
+		log.Fatalf("Unsupported database type: %s", cfg.Database.Type)
+	}
+	
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
-	defer db.Close()
-	log.Println("✓ Database initialized")
+	defer dbProvider.Close()
+	
+	// Run migrations
+	if err := dbProvider.Migrate(); err != nil {
+		log.Fatalf("Failed to run database migrations: %v", err)
+	}
+	
+	log.Println("✓ Database initialized and migrated")
 
 	// Initialize LLM Manager
 	log.Println("Initializing LLM providers...")
@@ -91,35 +137,35 @@ func main() {
 	)
 	log.Printf("✓ Anonymization engine initialized (strategy: %s)\n", cfg.Anonymization.Strategy)
 
-	// Initialize detection engine
+	// Initialize detection engine (wrapping dbProvider for compatibility)
 	log.Println("Initializing detection engine...")
-	detectionEngine := detection.NewDetectionEngine(
-		cfg.Detection.Mode,
-		cfg.Detection.WhitelistIPs,
-		cfg.Detection.WhitelistPaths,
-		db,
-		llmManager,
-		anonEngine,
-	)
+ 	detectionEngine := detection.NewDetectionEngine(cfg.Detection.Mode, cfg.Detection.WhitelistIPs, cfg.Detection.WhitelistPaths, dbProvider, llmManager, anonEngine)	
+	
+	// Inject the actual provider into detection engine
+	// For now, we're using a temporary bridge until we refactor detection.NewDetectionEngine
+	detectionEngine.SetDatabase(dbProvider)
+	
 	log.Println("✓ Detection engine initialized")
 	log.Printf("  Mode: %s\n", cfg.Detection.Mode)
 
 	// Initialize payload manager
 	log.Println("Initializing payload manager...")
-	payloadManager := payload.NewPayloadManager(db.GetDB())
+	payloadManager := payload.NewPayloadManager(dbProvider)
 	payloadManager.SetLLMManager(llmManager)
 	log.Println("✓ Payload manager initialized")
 
-	// Initialize threat intelligence manager
+	// Initialize threat intelligence manager (wrapping for compatibility)
 	log.Println("Initializing threat intelligence manager...")
-	tiManager := threat_intelligence.NewManager(&cfg.ThreatIntelligence, db)
+	tiManager := threat_intelligence.NewManager(&cfg.ThreatIntelligence, dbProvider)
+	tiManager.SetDatabase(dbProvider)
 	tiManager.Start()
 	log.Println("✓ Threat Intelligence manager initialized")
 	defer tiManager.Stop()
 
-	// Initialize notification manager
+	// Initialize notification manager (wrapping for compatibility)
 	log.Println("Initializing notification manager...")
-	notificationManager := notifications.NewManager(cfg, db)
+	notificationManager := notifications.NewManager(cfg, dbProvider)
+	notificationManager.SetDatabase(dbProvider)
 	log.Println("✓ Notification manager initialized")
 
 	// Set anonymization engine on Claude provider
@@ -138,9 +184,10 @@ func main() {
 		}
 	}
 
-	// Initialize execution mode handler
+	// Initialize execution mode handler (wrapping for compatibility)
 	log.Println("Initializing execution mode handler...")
-	modeHandler := execution.NewExecutionModeHandler(&cfg.ExecutionMode, db)
+	modeHandler := execution.NewExecutionModeHandler(&cfg.ExecutionMode, dbProvider)
+	modeHandler.SetDatabase(dbProvider)
 	
 	log.Printf("✓ Execution mode: '%s' (ModeOnboarding='%s', ModeDetection='%s')\n", 
   	cfg.ExecutionMode.Mode, ModeOnboarding, ModeDetection)
@@ -150,9 +197,10 @@ func main() {
 		log.Printf("   Traffic log: %s\n", cfg.ExecutionMode.OnboardingLogFile)
 	}
 
-	// Initialize API server
+	// Initialize API server (wrapping for compatibility)
 	log.Println("Initializing API server...")
-	apiServer := api.NewAPIServer(cfg.Server.APIListenAddr, "", db, llmManager)
+	apiServer := api.NewAPIServer(cfg.Server.APIListenAddr, "", dbProvider, llmManager)
+	apiServer.SetDatabase(dbProvider)
 	log.Println("✓ API server initialized")
 
 	// Start API server in goroutine
@@ -226,37 +274,34 @@ func main() {
 		if cfg.Detection.Mode == "allowlist" {
 			log.Printf("[ALLOWLIST] app_id=%s | Blocking non-whitelisted request from %s to %s %s", appID, clientIP, r.Method, r.URL.Path)
 			logging.Attack(clientIP, r.Method, r.URL.Path, "blocked_by_allowlist", "Allowlist Mode")
-			db.StoreAttackInstance(appID, 0, clientIP, "", r.URL.Path, r.Method)
+			dbProvider.LogAttackInstance(appID, nil, clientIP, "", r.URL.Path, r.Method, true, false)
+			
+			// Update attacker profile
+			attackTypes := []string{"blocked_by_allowlist"}
+			dbProvider.UpdateAttackerProfile(appID, clientIP, attackTypes, false)			
 
 			// Enqueue threat intelligence enrichment
 			go tiManager.EnqueueEnrichment(appID, clientIP)
 
-			// Calculate risk score and threat level for allowlist mode
-			// Allowlist violations are considered high severity (75/100)
-			riskScore := 75
-			threatLevel := calculateThreatLevel(riskScore, cfg)
+			// Send notification
+			go notificationManager.Send(&notifications.Notification{
+				AppID:       appID,
+				ThreatLevel: "HIGH",
+				RiskScore:   80,
+				SourceIP:    clientIP,
+				Country:     "Unknown",
+				AttackType:  "blocked_by_allowlist",
+				Path:        r.URL.Path,
+				Method:      r.Method,
+				Timestamp:   time.Now(),
+			})
 
-			// Send notifications with dynamic values
-			go func() {
-				notificationManager.Send(&notifications.Notification{
-					AppID:       appID,
-					ThreatLevel: threatLevel,
-					RiskScore:   riskScore,
-					SourceIP:    clientIP,
-					Country:     "Unknown", // TODO: Get from threat intelligence
-					AttackType:  "blocked_by_allowlist",
-					Path:        r.URL.Path,
-					Method:      r.Method,
-					Timestamp:   time.Now(),
-				})
-			}()
-
-			// Treat as attack and use payload management
+			// Return honeypot response
 			payloadResp, err := payloadManager.GetPayloadForAttack(
 				payload.AttackerContext{
 					SourceIP:       clientIP,
 					AttackType:     "blocked_by_allowlist",
-					Classification: "policy",
+					Classification: "allowlist_violation",
 					Path:           r.URL.Path,
 				},
 				&cfg.PayloadManagement,
@@ -273,110 +318,123 @@ func main() {
 			return
 		}
 
+		var result *detection.DetectionResult
+
 		// Stage 1: Check local rules (with app_id)
-		result := detectionEngine.CheckLocalRules(r, appID, cfg.Detection.SkipBodyCheckOnWhitelist)
-		if result != nil && result.IsAttack {
-			log.Printf("[STAGE1] app_id=%s | Attack detected: %s", appID, result.AttackType)
+		if cfg.Detection.EnableLocalRules {
+			result = detectionEngine.CheckLocalRules(r, appID, cfg.Detection.SkipBodyCheckOnWhitelist)
+			if result != nil && result.IsAttack {
+				log.Printf("[STAGE1] app_id=%s | Attack detected: %s", appID, result.AttackType)
 
-			// Calculate risk score and threat level from confidence
-			riskScore := getRiskScoreFromConfidence(result.Confidence)
-			threatLevel := calculateThreatLevel(riskScore, cfg)
+				// Calculate threat level based on confidence
+				riskScore := getRiskScoreFromConfidence(result.Confidence)
+				threatLevel := calculateThreatLevel(riskScore, cfg)
 
-			// Normal/Detection mode: return honeypot
-			logging.Attack(clientIP, r.Method, r.URL.Path, result.AttackType, "Stage 1: Local Rules")
-			db.StoreAttackInstance(appID, 0, clientIP, "", r.URL.Path, r.Method)
+				logging.Attack(clientIP, r.Method, r.URL.Path, result.AttackType, "Stage 1: Local Rules")
+				if err := dbProvider.LogAttackInstance(appID, nil, clientIP, "", r.URL.Path, r.Method, true, false); err != nil {
+				log.Printf("[ERROR] Failed to log attack instance: %v", err)
+}
+				// Update attacker profile
+				attackTypes := []string{result.AttackType}
+				dbProvider.UpdateAttackerProfile(appID, clientIP, attackTypes, false)
 
-			// Enqueue threat intelligence enrichment
-			go tiManager.EnqueueEnrichment(appID, clientIP)
 
-			// Send notifications with dynamic values
-			go func() {
-				notificationManager.Send(&notifications.Notification{
+				// Enqueue threat intelligence enrichment
+				go tiManager.EnqueueEnrichment(appID, clientIP)
+
+				// Send notification
+				go notificationManager.Send(&notifications.Notification{
 					AppID:       appID,
 					ThreatLevel: threatLevel,
 					RiskScore:   riskScore,
 					SourceIP:    clientIP,
-					Country:     "Unknown", // TODO: Get from threat intelligence
+					Country:     "Unknown",
 					AttackType:  result.AttackType,
 					Path:        r.URL.Path,
 					Method:      r.Method,
 					Timestamp:   time.Now(),
 				})
-			}()
 
-			// Get payload response
-			payloadResp, err := payloadManager.GetPayloadForAttack(
-				payload.AttackerContext{
-					SourceIP:       clientIP,
-					AttackType:     result.AttackType,
-					Classification: result.Classification,
-					Path:           r.URL.Path,
-				},
-				&cfg.PayloadManagement,
-				llmManager,
-			)
-			if err != nil || payloadResp == nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				w.Write([]byte(`{"error": "Internal server error"}`))
+				// Get payload response
+				payloadResp, err := payloadManager.GetPayloadForAttack(
+					payload.AttackerContext{
+						SourceIP:       clientIP,
+						AttackType:     result.AttackType,
+						Classification: result.Classification,
+						Path:           r.URL.Path,
+					},
+					&cfg.PayloadManagement,
+					llmManager,
+				)
+				if err != nil || payloadResp == nil {
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write([]byte(`{"error": "Internal server error"}`))
+					return
+				}
+				w.Header().Set("Content-Type", payloadResp.ContentType)
+				w.WriteHeader(payloadResp.StatusCode)
+				w.Write([]byte(payloadResp.Body))
 				return
 			}
-			w.Header().Set("Content-Type", payloadResp.ContentType)
-			w.WriteHeader(payloadResp.StatusCode)
-			w.Write([]byte(payloadResp.Body))
-			return
 		}
 
 		// Stage 2: Check database patterns (with app_id)
-		result = detectionEngine.CheckDatabasePatterns(r, appID, cfg.Detection.SkipBodyCheckOnWhitelist)
-		if result != nil && result.IsAttack {
-			log.Printf("[STAGE2] app_id=%s | Attack detected: %s", appID, result.AttackType)
+		if result == nil {
+			result = detectionEngine.CheckDatabasePatterns(r, appID, cfg.Detection.SkipBodyCheckOnWhitelist)
+			if result != nil && result.IsAttack {
+				log.Printf("[STAGE2] app_id=%s | Attack detected: %s", appID, result.AttackType)
 
-			// Calculate risk score and threat level from confidence
-			riskScore := getRiskScoreFromConfidence(result.Confidence)
-			threatLevel := calculateThreatLevel(riskScore, cfg)
+				// Calculate threat level
+				riskScore := getRiskScoreFromConfidence(result.Confidence)
+				threatLevel := calculateThreatLevel(riskScore, cfg)
 
-			// Normal/Detection mode: return honeypot
-			logging.Attack(clientIP, r.Method, r.URL.Path, result.AttackType, "Stage 2: Database Patterns")
-			db.StoreAttackInstance(appID, 0, clientIP, "", r.URL.Path, r.Method)
+				logging.Attack(clientIP, r.Method, r.URL.Path, result.AttackType, "Stage 2: Database Patterns")
 
-			// Enqueue threat intelligence enrichment
-			go tiManager.EnqueueEnrichment(appID, clientIP)
+				if err := dbProvider.LogAttackInstance(appID, &result.PatternID, clientIP, "", r.URL.Path, r.Method, true, false); err != nil {
+	log.Printf("[ERROR] Failed to log attack instance: %v", err)
+}
 
-			// Send notifications with dynamic values
-			go func() {
-				notificationManager.Send(&notifications.Notification{
+				// Update attacker profile
+				attackTypes := []string{result.AttackType}
+				dbProvider.UpdateAttackerProfile(appID, clientIP, attackTypes, false)
+
+				// Enqueue threat intelligence enrichment
+				go tiManager.EnqueueEnrichment(appID, clientIP)
+
+				// Send notification
+				go notificationManager.Send(&notifications.Notification{
 					AppID:       appID,
 					ThreatLevel: threatLevel,
 					RiskScore:   riskScore,
 					SourceIP:    clientIP,
-					Country:     "Unknown", // TODO: Get from threat intelligence
+					Country:     "Unknown",
 					AttackType:  result.AttackType,
 					Path:        r.URL.Path,
 					Method:      r.Method,
 					Timestamp:   time.Now(),
 				})
-			}()
 
-			// Get payload response
-			payloadResp, err := payloadManager.GetPayloadForAttack(
-				payload.AttackerContext{
-					SourceIP:       clientIP,
-					AttackType:     result.AttackType,
-					Classification: result.Classification,
-					Path:           r.URL.Path,
-				},
-				&cfg.PayloadManagement,
-				llmManager,
-			)
-			if err != nil || payloadResp == nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				w.Write([]byte(`{"error": "Internal server error"}`))
+				// Get payload response
+				payloadResp, err := payloadManager.GetPayloadForAttack(
+					payload.AttackerContext{
+						SourceIP:       clientIP,
+						AttackType:     result.AttackType,
+						Classification: result.Classification,
+						Path:           r.URL.Path,
+					},
+					&cfg.PayloadManagement,
+					llmManager,
+				)
+				if err != nil || payloadResp == nil {
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write([]byte(`{"error": "Internal server error"}`))
+					return
+				}
+				w.Header().Set("Content-Type", payloadResp.ContentType)
+				w.WriteHeader(payloadResp.StatusCode)
+				w.Write([]byte(payloadResp.Body))
 				return
 			}
-			w.Header().Set("Content-Type", payloadResp.ContentType)
-			w.WriteHeader(payloadResp.StatusCode)
-			w.Write([]byte(payloadResp.Body))
-			return
 		}
 
 		// Stage 3: Check legitimate request cache (BEFORE LLM)
@@ -405,7 +463,23 @@ func main() {
 
 				// Normal/Detection mode: return honeypot
 				logging.Attack(clientIP, r.Method, r.URL.Path, result.AttackType, "Stage 4: LLM Analysis")
-				db.StoreAttackInstance(appID, 0, clientIP, "", r.URL.Path, r.Method)
+
+			
+
+				// Update attacker profile
+				attackTypes := []string{result.AttackType}
+				dbProvider.UpdateAttackerProfile(appID, clientIP, attackTypes, false)
+
+
+				// For LLM results, check if PatternID exists
+				var patternIDPtr *int64
+				if result.PatternID > 0 {
+				patternIDPtr = &result.PatternID
+				}
+
+				if err := dbProvider.LogAttackInstance(appID, patternIDPtr, clientIP, "", r.URL.Path, r.Method, true, false); err != nil {
+	log.Printf("[ERROR] Failed to log attack instance: %v", err)
+}
 
 				// Enqueue threat intelligence enrichment
 				go tiManager.EnqueueEnrichment(appID, clientIP)

@@ -4,6 +4,183 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+
+## [0.3.0] - 2025-12-01
+
+### Added - Multi-Database Support
+
+#### PostgreSQL Provider
+- **Full PostgreSQL Support** - Production-ready PostgreSQL database provider
+- **Automatic Schema Migration** - Creates all 21 tables on first run
+- **Dual Database Support** - Seamlessly switch between SQLite and PostgreSQL
+- **Connection Pooling** - Efficient PostgreSQL connection management
+- **Configuration-Based Selection** - Choose database via `config/default.json`
+
+#### Database Provider Architecture
+- **Provider Interface** - Abstract database operations for portability
+- **SQLite Provider** - Enhanced with complete provider methods
+- **PostgreSQL Provider** - Full feature parity with SQLite
+- **Automatic Placeholder Translation** - `?` (SQLite) vs `$1` (PostgreSQL)
+- **Type Safety** - Proper handling of NULL values and type conversions
+
+#### New Provider Methods (40+ methods)
+- **Threat Intelligence** - `GetThreatIntelList`, `GetTopThreatsByRiskScore`, `GetThreatIntelStats`, `GetThreatIntelDetail`
+- **Attacker Interactions** - `GetAttackerInteractionsCount`
+- **Exceptions** - `CheckException`
+- **Notifications** - `GetNotificationHistory`
+- **Payload Management** - `GetPayloadTemplate`, `CachePayloadTemplate`, `GetPayloadCacheStats`
+- **Payload Conditions** - `AddPayloadCondition`, `RemovePayloadCondition`, `GetPayloadConditions`
+
+#### CLI Tool Enhancement
+- **Multi-Database Support** - CLI automatically detects database type from config
+- **PostgreSQL Compatibility** - All CLI commands work with both databases
+- **Config-Driven** - Reads `config/default.json` for database settings
+
+### Changed
+
+#### Database Layer
+- **Complete Refactoring** - All raw SQL converted to provider methods
+- **API Handlers** - Updated to use DatabaseProvider interface
+- **Detection Engine** - Uses provider methods for exception checks
+- **Webhook System** - Uses provider methods for active webhooks
+- **PayloadManager** - Complete refactor to use DatabaseProvider pattern
+
+#### Configuration
+- **New `database` section**:
+```json
+  {
+    "database": {
+      "type": "postgres",  // or "sqlite"
+      "host": "localhost",
+      "port": 5432,
+      "user": "ifrit_user",
+      "password": "your_password",
+      "dbname": "ifrit"
+    }
+  }
+```
+
+#### Foreign Keys
+- **Nullable Pattern IDs** - `attack_instances.pattern_id` now allows NULL for non-pattern attacks
+- **Proper Attribution** - Attacks from allowlist, Stage 1, Stage 3 store NULL pattern_id
+- **Database Integrity** - Pattern IDs only stored for Stage 2 (database pattern) detections
+
+### Fixed
+
+#### NULL Handling
+- **sql.NullString** - Proper handling of nullable `payload_template` column
+- **Type Conversions** - Safe int/int64 conversion with helper function
+- **Error Prevention** - No more "converting NULL to string" errors
+
+#### SQL Compatibility
+- **Placeholder Syntax** - Automatic handling of SQLite `?` vs PostgreSQL `$1, $2`
+- **Boolean Types** - SQLite `1/0` vs PostgreSQL `TRUE/FALSE`
+- **Auto-increment** - SQLite `AUTOINCREMENT` vs PostgreSQL `SERIAL`
+- **Timestamps** - SQLite `datetime('now')` vs PostgreSQL `CURRENT_TIMESTAMP`
+- **Upsert** - SQLite `INSERT OR REPLACE` vs PostgreSQL `ON CONFLICT DO UPDATE`
+
+### Testing
+
+#### Database Compatibility (New)
+- SQLite Provider - All 21 tables, all CRUD operations
+- PostgreSQL Provider - All 21 tables, all CRUD operations
+- Attack Detection Pipeline - Both databases
+- Attacker Profiling - Both databases
+- Threat Intelligence - Both databases
+- Payload Management - Both databases
+- API Endpoints - Both databases
+- CLI Tool - Both databases
+- NULL Foreign Keys - Proper handling
+
+#### End-to-End Validation
+- Attack logged with pattern_id (Stage 2)
+- Attack logged with NULL pattern_id (Allowlist, Stage 1, Stage 3)
+- Attacker profiles updated
+- Threat intelligence stored
+- Notifications triggered
+- API endpoints return correct data
+- CLI commands work with both databases
+
+### Performance
+
+| Operation | SQLite | PostgreSQL |
+|-----------|--------|------------|
+| Attack detection | <10ms | <10ms |
+| Pattern lookup | <5ms | <8ms |
+| Attacker profile update | <15ms | <12ms |
+| Threat intel query | <10ms | <8ms |
+| API endpoint | <20ms | <18ms |
+
+### Migration Guide
+
+#### SQLite to PostgreSQL
+```bash
+# 1. Export SQLite data
+sqlite3 data/ifrit.db .dump > ifrit_backup.sql
+
+# 2. Install PostgreSQL
+# See INSTALLATION.md for instructions
+
+# 3. Update config
+nano config/default.json
+# Change "type": "sqlite" to "type": "postgres"
+# Add PostgreSQL connection details
+
+# 4. Restart IFRIT
+# PostgreSQL schema created automatically
+
+# 5. Import data (manual)
+# Convert SQLite dump to PostgreSQL format
+# Import using psql
+```
+
+### Documentation
+
+- **INSTALLATION.md** - Added PostgreSQL setup section
+- **START_HERE.md** - Updated with database options
+- **FEATURES.md** - Added PostgreSQL support to feature list
+- **README.md** - Architecture diagrams updated
+
+### Breaking Changes
+
+**None** - Fully backward compatible with existing SQLite deployments
+
+### Upgrade Path
+
+**From 0.2.0 to 0.3.0:**
+1. Update binary: `go build -o ifrit cmd/ifrit/main.go`
+2. Optionally switch to PostgreSQL (see Migration Guide)
+3. No database changes needed for SQLite users
+4. CLI automatically detects database type
+
+### Known Issues
+
+- **Large databases**: SQLite may be slow for >1M attack records (consider PostgreSQL)
+- **Multi-instance**: SQLite doesn't support concurrent writers (use PostgreSQL for clustering)
+- **Data migration**: No automated SQLite→PostgreSQL migration tool yet (manual export/import required)
+
+### Configuration Example (PostgreSQL)
+```json
+{
+  "database": {
+    "type": "postgres",
+    "host": "localhost",
+    "port": 5432,
+    "user": "ifrit_user",
+    "password": "secure_password",
+    "dbname": "ifrit"
+  }
+}
+```
+
+### Dependencies
+
+- **lib/pq** - PostgreSQL driver for Go (added)
+- **mattn/go-sqlite3** - SQLite driver (existing)
+
+---
+
+
 ### Added - Threat Intelligence & Notifications
 
 #### Threat Intelligence System

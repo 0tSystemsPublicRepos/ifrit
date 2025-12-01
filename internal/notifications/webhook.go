@@ -7,20 +7,21 @@ import (
 	"io"
 	"net/http"
 	"time"
-	"database/sql"
 
 	"github.com/0tSystemsPublicRepos/ifrit/internal/config"
 	"github.com/0tSystemsPublicRepos/ifrit/internal/database"
 	"github.com/0tSystemsPublicRepos/ifrit/internal/logging"
 )
 
+
 type WebhookProvider struct {
 	config *config.WebhooksConfig
-	db     *database.SQLiteDB
+	db     database.DatabaseProvider
 	client *http.Client
 }
 
-func NewWebhookProvider(cfg *config.WebhooksConfig, db *database.SQLiteDB) *WebhookProvider {
+
+func NewWebhookProvider(cfg *config.WebhooksConfig, db database.DatabaseProvider) *WebhookProvider {
 	return &WebhookProvider{
 		config: cfg,
 		db:     db,
@@ -28,6 +29,12 @@ func NewWebhookProvider(cfg *config.WebhooksConfig, db *database.SQLiteDB) *Webh
 			Timeout: time.Duration(cfg.TimeoutSeconds) * time.Second,
 		},
 	}
+}
+
+
+// SetDatabase sets the database provider for the webhook provider
+func (wp *WebhookProvider) SetDatabase(db database.DatabaseProvider) {
+	wp.db = db
 }
 
 func (wp *WebhookProvider) Name() string {
@@ -168,53 +175,20 @@ func (wp *WebhookProvider) buildWebhookPayload(notification *Notification) *Webh
 
 // getActiveWebhooks retrieves all active webhooks for an app
 func (wp *WebhookProvider) getActiveWebhooks(appID string) ([]map[string]interface{}, error) {
-	query := `
-		SELECT id, endpoint, auth_type, auth_value
-		FROM webhooks_config
-		WHERE app_id = ? AND enabled = 1
-	`
-	
-	rows, err := wp.db.GetDB().Query(query, appID)
+	webhooks, err := wp.db.GetActiveWebhooks(appID)
 	if err != nil {
-		logging.Error("[WEBHOOK] Database query error: %v", err)
+		logging.Error("[WEBHOOK] Error fetching webhooks: %v", err)
 		return nil, err
 	}
-	defer rows.Close()
-
-	var webhooks []map[string]interface{}
-	for rows.Next() {
-		var id int64
-		var endpoint, authType string
-		var authValue sql.NullString
-		
-		if err := rows.Scan(&id, &endpoint, &authType, &authValue); err != nil {
-			logging.Error("[WEBHOOK] Row scan error: %v", err)
-			continue
-		}
-
-		authVal := ""
-		if authValue.Valid {
-			authVal = authValue.String
-		}
-
-		logging.Debug("[WEBHOOK] Found webhook: id=%d endpoint=%s auth_type=%s", id, endpoint, authType)
-		webhooks = append(webhooks, map[string]interface{}{
-			"id":        id,
-			"endpoint":  endpoint,
-			"auth_type": authType,
-			"auth_value": authVal,
-		})
-	}
-
+	
 	if len(webhooks) == 0 {
 		logging.Debug("[WEBHOOK] No active webhooks found for app_id: %s", appID)
 	} else {
 		logging.Info("[WEBHOOK] Found %d active webhook(s) for app_id: %s", len(webhooks), appID)
 	}
-
-	return webhooks, rows.Err()
+	
+	return webhooks, nil
 }
-
 
 // recordWebhookFire logs webhook fire attempt
 func (wp *WebhookProvider) recordWebhookFire(webhookID int64, status, errorMsg string) {

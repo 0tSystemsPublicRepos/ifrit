@@ -12,7 +12,7 @@ import (
 type Manager struct {
 	config    *config.ThreatIntelligenceConfig
 	enricher  *Enricher
-	db        *database.SQLiteDB
+	db        database.DatabaseProvider
 	queue     chan EnrichmentJob
 	workers   int
 	stopChan  chan bool
@@ -27,7 +27,15 @@ type EnrichmentJob struct {
 	MaxRetry int
 }
 
-func NewManager(cfg *config.ThreatIntelligenceConfig, db *database.SQLiteDB) *Manager {
+// SetDatabase sets the database provider for the threat intelligence manager
+func (m *Manager) SetDatabase(db database.DatabaseProvider) {
+	m.db = db
+	if m.enricher != nil {
+		m.enricher.SetDatabase(db)
+	}
+}
+
+func NewManager(cfg *config.ThreatIntelligenceConfig, db database.DatabaseProvider) *Manager {	
 	workers := cfg.EnrichmentWorkers
 	if workers <= 0 {
 		workers = 3

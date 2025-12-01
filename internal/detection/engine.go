@@ -22,10 +22,11 @@ type DetectionEngine struct {
 	localRules     []*Rule
 	whitelistIPs   map[string]bool
 	whitelistPaths []*regexp.Regexp
-	db             *database.SQLiteDB
+	db             database.DatabaseProvider
 	llmManager     *llm.Manager
 	anonEngine     *anonymization.AnonymizationEngine
 }
+
 
 type Rule struct {
 	Name     string
@@ -41,11 +42,17 @@ type DetectionResult struct {
 	Confidence      float64
 	Signature       string
 	DetectionStage  int
+	PatternID       int64 
 	PayloadTemplate string
 	ResponseCode    int
 }
 
-func NewDetectionEngine(mode string, whitelistIPs []string, whitelistPaths []string, db *database.SQLiteDB, llmManager *llm.Manager, anonEngine *anonymization.AnonymizationEngine) *DetectionEngine {
+// SetDatabase sets the database provider for the detection engine
+func (e *DetectionEngine) SetDatabase(db database.DatabaseProvider) {
+	e.db = db
+}
+
+func NewDetectionEngine(mode string, whitelistIPs []string, whitelistPaths []string, db database.DatabaseProvider, llmManager *llm.Manager, anonEngine *anonymization.AnonymizationEngine) *DetectionEngine {	
 	engine := &DetectionEngine{
 		mode:           mode,
 		whitelistIPs:   make(map[string]bool),
@@ -117,30 +124,16 @@ func (de *DetectionEngine) CheckExceptions(r *http.Request, clientIP, appID stri
 		}
 	}
 
-	// Check database exceptions table (with app_id)
-	var exists bool
-	err := de.db.GetDB().QueryRow(
-		`SELECT EXISTS(
-			SELECT 1 FROM exceptions 
-			WHERE enabled = 1 
-			AND app_id = ?
-			AND path = ? 
-			AND (ip_address = ? OR ip_address = '*')
-		)`,
-		appID,
-		r.URL.Path,
-		clientIP,
-	).Scan(&exists)
-
+	exists, err := de.db.CheckException(appID, r.URL.Path, clientIP)
 	if err == nil && exists {
 		return true
-	}
-
+	}	
 	return false
 }
 
 // CheckLocalRules checks request against local regex rules (with app_id support)
 func (de *DetectionEngine) CheckLocalRules(r *http.Request, appID string, skipBodyCheckOnWhitelist bool) *DetectionResult {
+	logging.Debug("[STAGE1] app_id=%s | CheckLocalRules called for: %s %s", appID, r.Method, r.URL.Path)
 	for _, rule := range de.localRules {
 		methodMatch := false
 		for _, m := range rule.Methods {
@@ -178,16 +171,19 @@ func (de *DetectionEngine) CheckLocalRules(r *http.Request, appID string, skipBo
 			}
 		}
 	}
-
+	logging.Debug("[STAGE1] app_id=%s | No local rule matched, returning nil", appID)
 	return nil
 }
 
 // CheckDatabasePatterns checks request against database patterns (with app_id support)
 func (de *DetectionEngine) CheckDatabasePatterns(r *http.Request, appID string, skipBodyCheckOnWhitelist bool) *DetectionResult {
+	logging.Debug("[STAGE2] app_id=%s | CheckDatabasePatterns called for: %s %s", appID, r.Method, r.URL.Path)
 	patterns, err := de.db.GetAllPatterns(appID)
 	if err != nil {
+		logging.Error("[STAGE2] app_id=%s | Error fetching patterns: %v", appID, err)
 		return nil
 	}
+	logging.Debug("[STAGE2] app_id=%s | Fetched %d patterns from database", appID, len(patterns))
 
 
 	for _, pattern := range patterns {
@@ -212,7 +208,7 @@ func (de *DetectionEngine) CheckDatabasePatterns(r *http.Request, appID string, 
 		}
 
 		// Check path
-
+		logging.Debug("[STAGE2] app_id=%s | Comparing: pathPattern='%s' == r.URL.Path='%s' | method='%s' == r.Method='%s'", appID, pathPattern, r.URL.Path, method, r.Method)
 		if pathPattern == r.URL.Path {
 			return &DetectionResult{
 				IsAttack:        true,
@@ -221,14 +217,29 @@ func (de *DetectionEngine) CheckDatabasePatterns(r *http.Request, appID string, 
 				Confidence:      pattern["confidence"].(float64),
 				Signature:       de.GenerateSignature(r),
 				DetectionStage:  2,
+				PatternID:       pattern["id"].(int64),
 				PayloadTemplate: pattern["payload_template"].(string),
-				ResponseCode:    int(pattern["response_code"].(int64)),
+				ResponseCode:    getIntFromInterface(pattern["response_code"]), 
 			}
 		}
 	}
 
 	return nil
 }
+
+
+// getIntFromInterface safely converts interface{} to int (handles both int and int64)
+func getIntFromInterface(val interface{}) int {
+	switch v := val.(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	default:
+		return 0
+	}
+}
+
 
 // CheckLegitimateCache checks if request is in legitimate cache (STAGE 3)
 func (de *DetectionEngine) CheckLegitimateCache(r *http.Request, appID string, skipBodyCheckOnWhitelist bool) (bool, error) {
@@ -277,66 +288,68 @@ func (de *DetectionEngine) StoreLegitimateRequest(r *http.Request, appID string)
 	return nil
 }
 
+
 // CheckLLMAnalysis performs LLM analysis for unknown requests (with app_id support)
 func (de *DetectionEngine) CheckLLMAnalysis(r *http.Request, appID string, skipBodyCheckOnWhitelist bool) *DetectionResult {
-	if de.llmManager == nil {
-		return nil
-	}
+        if de.llmManager == nil {
+                return nil
+        }
 
-	// Check keyword exceptions before calling LLM
-	if de.shouldSkipKeywordCheck(r, appID) && skipBodyCheckOnWhitelist {
-		logging.Debug("[KEYWORD_SKIP] app_id=%s | Skipping LLM analysis due to exception (skipBodyCheck=%v)", appID, skipBodyCheckOnWhitelist)
-		return nil
-	}
+        // Check keyword exceptions before calling LLM
+        if de.shouldSkipKeywordCheck(r, appID) && skipBodyCheckOnWhitelist {
+                logging.Debug("[KEYWORD_SKIP] app_id=%s | Skipping LLM analysis due to exception (skipBodyCheck=%v)", appID, skipBodyCheckOnWhitelist)
+                return nil
+        }
 
-	// If skipBodyCheck is false, continue analysis even if path is whitelisted
-	if de.shouldSkipKeywordCheck(r, appID) && !skipBodyCheckOnWhitelist {
-		logging.Debug("[KEYWORD_CHECK] app_id=%s | Path whitelisted but checking body/headers (skipBodyCheck=false)", appID)
-	}
+        // If skipBodyCheck is false, continue analysis even if path is whitelisted
+        if de.shouldSkipKeywordCheck(r, appID) && !skipBodyCheckOnWhitelist {
+                logging.Debug("[KEYWORD_CHECK] app_id=%s | Path whitelisted but checking body/headers (skipBodyCheck=false)", appID)
+        }
 
-	// Extract request data for LLM
-	requestData := de.ExtractRequestData(r)
+        // Extract request data for LLM
+        requestData := de.ExtractRequestData(r)
 
-	// Call LLM
-	result, err := de.llmManager.AnalyzeRequest(requestData)
-	if err != nil {
-		logging.Error("[LLM ERROR] app_id=%s | Analysis error: %v", appID, err)
-		return nil
-	}
+        // Call LLM
+        result, err := de.llmManager.AnalyzeRequest(requestData)
+        if err != nil {
+                logging.Error("[LLM ERROR] app_id=%s | Analysis error: %v", appID, err)
+                return nil
+        }
+                
+        if !result.IsAttack {   
+                // LLM says it's legitimate - store in cache for future
+                de.StoreLegitimateRequest(r, appID)
+                return nil
+        }
 
-	if !result.IsAttack {
-		// LLM says it's legitimate - store in cache for future
-		de.StoreLegitimateRequest(r, appID)
-		return nil
-	}
+        // Store the result in database for future learning (with app_id)
+        payload, _ := de.llmManager.GeneratePayload(result.AttackType)
+        payloadJSON, _ := json.Marshal(payload)
+        de.db.StoreAttackPattern(
+                appID,
+                de.GenerateSignature(r),
+                result.AttackType,
+                result.Classification,
+                r.Method,
+                r.URL.Path,
+                string(payloadJSON),
+                200,
+                "llm",
+                result.Confidence,
+        )
 
-	// Store the result in database for future learning (with app_id)
-	payload, _ := de.llmManager.GeneratePayload(result.AttackType)
-	payloadJSON, _ := json.Marshal(payload)
-	de.db.StoreAttackPattern(
-		appID,
-		de.GenerateSignature(r),
-		result.AttackType,
-		result.Classification,
-		r.Method,
-		r.URL.Path,
-		string(payloadJSON),
-		200,
-		"llm",
-		result.Confidence,
-	)
-
-	return &DetectionResult{
-		IsAttack:        true,
-		AttackType:      result.AttackType,
-		Classification:  result.Classification,
-		Confidence:      result.Confidence,
-		Signature:       de.GenerateSignature(r),
-		DetectionStage:  4,
-		PayloadTemplate: string(payloadJSON),
-		ResponseCode:    200,
-	}
+        return &DetectionResult{
+                IsAttack:        true,
+                AttackType:      result.AttackType,
+                Classification:  result.Classification,
+                Confidence:      result.Confidence,
+                Signature:       de.GenerateSignature(r),
+                DetectionStage:  4,
+                PayloadTemplate: string(payloadJSON),
+                ResponseCode:    200,
+        }
 }
+
 
 // shouldSkipKeywordCheck checks if request should skip keyword exception filtering
 func (de *DetectionEngine) shouldSkipKeywordCheck(r *http.Request, appID string) bool {

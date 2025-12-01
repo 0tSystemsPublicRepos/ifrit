@@ -13,20 +13,28 @@ import (
 	"github.com/0tSystemsPublicRepos/ifrit/internal/llm"
 )
 
+
 type APIServer struct {
 	listenAddr string
 	apiKey     string
-	db         *database.SQLiteDB
+	db         database.DatabaseProvider
 	llmManager *llm.Manager
 }
 
-func NewAPIServer(listenAddr, apiKey string, db *database.SQLiteDB, llmManager *llm.Manager) *APIServer {
+
+func NewAPIServer(listenAddr, apiKey string, db database.DatabaseProvider, llmManager *llm.Manager) *APIServer {
 	return &APIServer{
 		listenAddr: listenAddr,
 		apiKey:     apiKey,
 		db:         db,
 		llmManager: llmManager,
 	}
+}
+
+
+// SetDatabase sets the database provider for the API server
+func (s *APIServer) SetDatabase(db database.DatabaseProvider) {
+	s.db = db
 }
 
 func (s *APIServer) Start() error {
@@ -696,8 +704,7 @@ func (s *APIServer) handleGetIntelStats(w http.ResponseWriter, r *http.Request) 
 	if appID == "" {
 		appID = "default"
 	}
-	var totalInteractions int64
-	s.db.GetDB().QueryRow("SELECT COUNT(*) FROM attacker_interactions WHERE app_id = ?", appID).Scan(&totalInteractions)
+	totalInteractions, _ := s.db.GetAttackerInteractionsCount(appID)	
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"status": "ok", "app_id": appID, "total_interactions": totalInteractions, "intel_templates": 2, "intel_injection": "enabled", "timestamp": time.Now()})
 }
@@ -878,45 +885,12 @@ func (s *APIServer) handleGetThreatIntel(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Query threat intelligence from database
-	rows, err := s.db.GetDB().Query(`
-		SELECT ip_address, risk_score, threat_level, abuseipdb_score, abuseipdb_reports, 
-		       virustotal_malicious, virustotal_suspicious, country, last_seen 
-		FROM threat_intelligence 
-		WHERE app_id = ? 
-		ORDER BY last_seen DESC 
-		LIMIT ?
-	`, appID, limit)
-
+	threatData, err := s.db.GetThreatIntelList(appID, limit)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
-	}
-	defer rows.Close()
-
-	var threatData []map[string]interface{}
-	for rows.Next() {
-		var ipAddress string
-		var riskScore, abuseScore, abuseReports, vtMalicious, vtSuspicious int
-		var threatLevel, country, lastSeen string
-
-		if err := rows.Scan(&ipAddress, &riskScore, &threatLevel, &abuseScore, &abuseReports,
-			&vtMalicious, &vtSuspicious, &country, &lastSeen); err != nil {
-			continue
-		}
-
-		threatData = append(threatData, map[string]interface{}{
-			"ip_address":           ipAddress,
-			"risk_score":           riskScore,
-			"threat_level":         threatLevel,
-			"abuseipdb_score":      abuseScore,
-			"abuseipdb_reports":    abuseReports,
-			"virustotal_malicious": vtMalicious,
-			"virustotal_suspicious": vtSuspicious,
-			"country":              country,
-			"last_seen":            lastSeen,
-		})
 	}
 
 	if threatData == nil {
@@ -926,6 +900,7 @@ func (s *APIServer) handleGetThreatIntel(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(threatData)
 }
+
 
 // handleGetThreatIntelDetail returns details for a specific IP
 func (s *APIServer) handleGetThreatIntelDetail(w http.ResponseWriter, r *http.Request) {
@@ -945,28 +920,18 @@ func (s *APIServer) handleGetThreatIntelDetail(w http.ResponseWriter, r *http.Re
 		appID = "default"
 	}
 
-	var threatDetail map[string]interface{}
-	err := s.db.GetDB().QueryRow(`
-		SELECT ip_address, risk_score, threat_level, abuseipdb_score, abuseipdb_reports,
-		       virustotal_malicious, virustotal_suspicious, ipinfo_city, ipinfo_country, 
-		       last_seen, created_at
-		FROM threat_intelligence
-		WHERE ip_address = ? AND app_id = ?
-	`, ip, appID).Scan(
-		&threatDetail, &threatDetail, &threatDetail, &threatDetail, &threatDetail,
-		&threatDetail, &threatDetail, &threatDetail, &threatDetail, &threatDetail, &threatDetail,
-	)
-
-	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Threat intel not found"})
-		return
-	}
-
+ 	threatDetail, err := s.db.GetThreatIntelDetail(appID, ip)
+if err != nil {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusNotFound)
+	json.NewEncoder(w).Encode(map[string]string{"error": "Threat intel not found"})
+	return
+}
+	
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(threatDetail)
 }
+
 
 // handleGetTopThreats returns top threats by risk score
 func (s *APIServer) handleGetTopThreats(w http.ResponseWriter, r *http.Request) {
@@ -985,42 +950,12 @@ func (s *APIServer) handleGetTopThreats(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	rows, err := s.db.GetDB().Query(`
-		SELECT ip_address, risk_score, threat_level, abuseipdb_reports, 
-		       virustotal_malicious, country, last_seen
-		FROM threat_intelligence
-		WHERE app_id = ?
-		ORDER BY risk_score DESC
-		LIMIT ?
-	`, appID, limit)
-
+	topThreats, err := s.db.GetTopThreatsByRiskScore(appID, limit)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
-	}
-	defer rows.Close()
-
-	var topThreats []map[string]interface{}
-	for rows.Next() {
-		var ipAddress, threatLevel, country, lastSeen string
-		var riskScore, abuseReports, vtMalicious int
-
-		if err := rows.Scan(&ipAddress, &riskScore, &threatLevel, &abuseReports,
-			&vtMalicious, &country, &lastSeen); err != nil {
-			continue
-		}
-
-		topThreats = append(topThreats, map[string]interface{}{
-			"ip_address":          ipAddress,
-			"risk_score":          riskScore,
-			"threat_level":        threatLevel,
-			"abuseipdb_reports":   abuseReports,
-			"virustotal_malicious": vtMalicious,
-			"country":             country,
-			"last_seen":           lastSeen,
-		})
 	}
 
 	if topThreats == nil {
@@ -1030,6 +965,7 @@ func (s *APIServer) handleGetTopThreats(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(topThreats)
 }
+
 
 // handleGetThreatIntelStats returns threat intelligence statistics
 func (s *APIServer) handleGetThreatIntelStats(w http.ResponseWriter, r *http.Request) {
@@ -1041,24 +977,25 @@ func (s *APIServer) handleGetThreatIntelStats(w http.ResponseWriter, r *http.Req
 		appID = "default"
 	}
 
-	var totalIPs, criticalCount, highCount, mediumCount, lowCount int
-
-	s.db.GetDB().QueryRow(`SELECT COUNT(*) FROM threat_intelligence WHERE app_id = ?`, appID).Scan(&totalIPs)
-	s.db.GetDB().QueryRow(`SELECT COUNT(*) FROM threat_intelligence WHERE app_id = ? AND threat_level = 'CRITICAL'`, appID).Scan(&criticalCount)
-	s.db.GetDB().QueryRow(`SELECT COUNT(*) FROM threat_intelligence WHERE app_id = ? AND threat_level = 'HIGH'`, appID).Scan(&highCount)
-	s.db.GetDB().QueryRow(`SELECT COUNT(*) FROM threat_intelligence WHERE app_id = ? AND threat_level = 'MEDIUM'`, appID).Scan(&mediumCount)
-	s.db.GetDB().QueryRow(`SELECT COUNT(*) FROM threat_intelligence WHERE app_id = ? AND threat_level = 'LOW'`, appID).Scan(&lowCount)
+	totalIPs, criticalCount, highCount, mediumCount, lowCount, err := s.db.GetThreatIntelStats(appID)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"total_ips":      totalIPs,
-		"critical":       criticalCount,
-		"high":           highCount,
-		"medium":         mediumCount,
-		"low":            lowCount,
-		"timestamp":      time.Now(),
+		"total_ips": totalIPs,
+		"critical":  criticalCount,
+		"high":      highCount,
+		"medium":    mediumCount,
+		"low":       lowCount,
+		"timestamp": time.Now(),
 	})
 }
+
 
 // handleGetNotificationConfig returns notification configuration
 func (s *APIServer) handleGetNotificationConfig(w http.ResponseWriter, r *http.Request) {
@@ -1144,52 +1081,26 @@ func (s *APIServer) handleGetNotificationHistory(w http.ResponseWriter, r *http.
 	if appID == "" {
 		appID = "default"
 	}
-
+	
 	limit := 50
 	if l := r.URL.Query().Get("limit"); l != "" {
 		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 1000 {
 			limit = parsed
 		}
 	}
-
-	rows, err := s.db.GetDB().Query(`
-		SELECT threat_level, source_ip, attack_type, notification_type, status, sent_at
-		FROM notification_history
-		WHERE app_id = ?
-		ORDER BY sent_at DESC
-		LIMIT ?
-	`, appID, limit)
-
+	
+	history, err := s.db.GetNotificationHistory(appID, limit)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	defer rows.Close()
-
-	var history []map[string]interface{}
-	for rows.Next() {
-		var threatLevel, sourceIP, attackType, notificationType, status, sentAt string
-
-		if err := rows.Scan(&threatLevel, &sourceIP, &attackType, &notificationType, &status, &sentAt); err != nil {
-			continue
-		}
-
-		history = append(history, map[string]interface{}{
-			"threat_level":       threatLevel,
-			"source_ip":          sourceIP,
-			"attack_type":        attackType,
-			"notification_type": notificationType,
-			"status":             status,
-			"sent_at":            sentAt,
-		})
-	}
-
+	
 	if history == nil {
 		history = []map[string]interface{}{}
 	}
-
+	
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(history)
 }

@@ -11,7 +11,7 @@ import (
 // === DATABASE ABSTRACTION LAYER ===
 
 type DatabaseConfig struct {
-	Type           string               `json:"type"`                    // "sqlite", "mysql", "postgresql"
+	Type           string               `json:"type"`                    // "sqlite", "postgresql"
 	SQLite         SQLiteConfig         `json:"sqlite,omitempty"`
 	MySQL          MySQLConfig          `json:"mysql,omitempty"`
 	PostgreSQL     PostgreSQLConfig     `json:"postgresql,omitempty"`

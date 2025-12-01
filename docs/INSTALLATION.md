@@ -1,7 +1,7 @@
 # IFRIT Proxy - Installation & Setup Guide
 
-**Version:** 0.1.1  
-**Last Updated:** November 7, 2025
+**Version:** 0.3.0  
+**Last Updated:** December 1st, 2025
 
 ---
 
@@ -9,7 +9,7 @@
 
 ### Prerequisites
 - Go 1.21+
-- SQLite3
+- SQLite3 (default) or PostgreSQL (optional)
 - Claude or Gemini API key (or both if you are using fallback mechanism for redundancy) 
 
 ### 1. Clone Repository
@@ -40,8 +40,7 @@ Add your Claude/Gemini API key under the relevant section in configuration:
 go build -o ifrit ./cmd/ifrit
 go build -o ifrit-cli ./cmd/ifrit-cli
 ```
-PS: also make sure ifrit-cli can access the sqlite.db file!
-
+PS: also make sure ifrit-cli can access the database file!
 
 ### 4. Run
 ```bash
@@ -69,7 +68,6 @@ Starting API server on :8443
 Starting proxy server on :8080
 ..
 ..
-
 ```
 
 ### 5. Test
@@ -79,6 +77,289 @@ curl http://localhost:8080/?q=<script>alert(1)</script>
 
 # Check CLI
 ./ifrit-cli exception list
+```
+
+---
+
+## Database Configuration
+
+IFRIT supports two database backends: **SQLite** (default) and **PostgreSQL**.
+
+### SQLite (Default)
+
+No setup required - SQLite database is created automatically at `./data/ifrit.db` on first run.
+
+**Pros:**
+- Zero configuration
+- Embedded (no separate server)
+- Perfect for development and small deployments
+- Fast for <1M records
+
+**Cons:**
+- Single writer (no clustering)
+- Limited concurrent connections
+- May be slow for very large datasets (>1M attacks)
+
+**Configuration:**
+```json
+{
+  "database": {
+    "type": "sqlite",
+    "path": "./data/ifrit.db"
+  }
+}
+```
+
+---
+
+### PostgreSQL (Recommended for Production)
+
+For high-volume deployments, multiple IFRIT instances, or large datasets.
+
+**Pros:**
+- Multi-writer support (clustering)
+- Better performance at scale (>1M records)
+- Advanced features (replication, backups)
+- Industry-standard RDBMS
+
+**Cons:**
+- Requires separate PostgreSQL server
+- More complex setup
+- Additional infrastructure
+
+#### Step 1: Install PostgreSQL
+
+**macOS (Homebrew):**
+```bash
+brew install postgresql@15
+brew services start postgresql@15
+```
+
+**Ubuntu/Debian:**
+```bash
+sudo apt update
+sudo apt install postgresql postgresql-contrib
+sudo systemctl start postgresql
+sudo systemctl enable postgresql
+```
+
+**Docker:**
+```bash
+docker run -d \
+  --name ifrit-postgres \
+  -e POSTGRES_PASSWORD=your_secure_password \
+  -e POSTGRES_DB=ifrit \
+  -p 5432:5432 \
+  postgres:15
+```
+
+#### Step 2: Create Database and User
+```bash
+# Connect as postgres user
+sudo -u postgres psql
+
+# Create database and user
+CREATE DATABASE ifrit;
+CREATE USER ifrit_user WITH ENCRYPTED PASSWORD 'your_secure_password';
+GRANT ALL PRIVILEGES ON DATABASE ifrit TO ifrit_user;
+
+# Exit
+\q
+```
+
+**For Docker:**
+```bash
+docker exec -it ifrit-postgres psql -U postgres
+
+# Then run the same SQL commands above
+```
+
+#### Step 3: Configure IFRIT
+
+Edit `config/default.json`:
+```json
+{
+  "database": {
+    "type": "postgres",
+    "host": "localhost",
+    "port": 5432,
+    "user": "ifrit_user",
+    "password": "your_secure_password",
+    "dbname": "ifrit"
+  }
+}
+```
+
+**Environment Variables (Recommended for Production):**
+```bash
+export IFRIT_DB_PASSWORD="your_secure_password"
+```
+
+Then in config:
+```json
+{
+  "database": {
+    "type": "postgres",
+    "host": "localhost",
+    "port": 5432,
+    "user": "ifrit_user",
+    "password": "${IFRIT_DB_PASSWORD}",
+    "dbname": "ifrit"
+  }
+}
+```
+
+#### Step 4: Start IFRIT
+```bash
+./ifrit
+```
+
+**Expected Output:**
+```
+[INFO] Initializing PostgreSQL database provider...
+[INFO] Connected to PostgreSQL: localhost:5432/ifrit
+[INFO] Creating database schema...
+[INFO] Created 21 tables successfully
+[INFO] Database initialization complete
+[INFO] Starting proxy server on :8080
+```
+
+#### Step 5: Verify Tables
+```bash
+psql -U ifrit_user -d ifrit -h localhost
+
+\dt
+
+# You should see 21 tables:
+# - attack_instances
+# - attack_patterns
+# - attacker_profiles
+# - threat_intelligence
+# - notification_history
+# ... and 16 more
+```
+
+---
+
+### Switching Between Databases
+
+**SQLite → PostgreSQL:**
+
+1. **Export SQLite data** (optional - for migration):
+```bash
+   sqlite3 ./data/ifrit.db .dump > ifrit_backup.sql
+```
+
+2. **Update config:**
+```bash
+   nano config/default.json
+   # Change "type": "sqlite" to "type": "postgres"
+   # Add PostgreSQL connection details
+```
+
+3. **Restart IFRIT:**
+```bash
+   pkill ifrit
+   ./ifrit
+```
+
+4. **Import data** (manual - if migrating):
+   - Convert SQLite dump to PostgreSQL format
+   - Use `psql` to import
+
+**PostgreSQL → SQLite:**
+
+1. **Export PostgreSQL data** (optional):
+```bash
+   pg_dump -U ifrit_user ifrit > ifrit_backup.sql
+```
+
+2. **Update config:**
+```bash
+   nano config/default.json
+   # Change "type": "postgres" to "type": "sqlite"
+```
+
+3. **Restart IFRIT:**
+```bash
+   pkill ifrit
+   ./ifrit
+```
+
+---
+
+### Database Comparison
+
+| Feature | SQLite | PostgreSQL |
+|---------|--------|------------|
+| **Setup** | Automatic | Manual setup required |
+| **Performance (<1M records)** | Fast | Fast |
+| **Performance (>1M records)** | Slower | Fast |
+| **Concurrent writes** | Single writer | Multiple writers |
+| **Clustering** | Not supported | Supported |
+| **Backup** | Copy file | pg_dump / replication |
+| **Production ready** | Small deployments | All deployments |
+| **Resource usage** | Minimal | Moderate |
+
+**Recommendation:**
+- **Development/Testing:** SQLite
+- **Small deployments (<100k attacks/day):** SQLite
+- **Production (>100k attacks/day):** PostgreSQL
+- **Multi-instance clustering:** PostgreSQL required
+
+---
+
+### Troubleshooting Database Issues
+
+#### PostgreSQL Connection Failed
+
+**Error:** `pq: password authentication failed`
+
+**Solution:**
+```bash
+# Check PostgreSQL is running
+sudo systemctl status postgresql
+
+# Verify user exists
+psql -U postgres -c "\du"
+
+# Reset password
+psql -U postgres -c "ALTER USER ifrit_user WITH PASSWORD 'new_password';"
+```
+
+#### Tables Not Created
+
+**Error:** `relation "attack_instances" does not exist`
+
+**Solution:**
+```bash
+# Check IFRIT logs for schema creation errors
+tail -f logs/ifrit.log | grep "CREATE TABLE"
+
+# Restart IFRIT to retry schema creation
+pkill ifrit
+./ifrit
+```
+
+#### Permission Denied on PostgreSQL
+
+**Error:** `pq: permission denied for database ifrit`
+
+**Solution:**
+```bash
+psql -U postgres << EOF
+GRANT ALL PRIVILEGES ON DATABASE ifrit TO ifrit_user;
+GRANT ALL ON SCHEMA public TO ifrit_user;
+EOF
+```
+
+#### CLI Not Working with PostgreSQL
+
+**Issue:** CLI commands fail after switching to PostgreSQL
+
+**Solution:** CLI automatically detects database type from `config/default.json`. Ensure config is correct:
+```bash
+cat config/default.json | grep -A7 '"database"'
 ```
 
 ---
@@ -95,6 +376,8 @@ brew install go@1.21
 #### Install Dependencies
 ```bash
 brew install sqlite3
+# Optional: Install PostgreSQL
+brew install postgresql@15
 ```
 
 #### Clone & Build
@@ -139,6 +422,8 @@ source ~/.bashrc
 ```bash
 sudo apt-get update
 sudo apt-get install sqlite3
+# Optional: Install PostgreSQL
+sudo apt-get install postgresql postgresql-contrib
 ```
 
 #### Clone & Build
@@ -211,6 +496,8 @@ go version
 #### Install Dependencies
 ```bash
 sudo dnf install sqlite-devel
+# Optional: Install PostgreSQL
+sudo dnf install postgresql-server postgresql-contrib
 ```
 
 #### Clone & Build
@@ -283,6 +570,22 @@ Create `docker-compose.yml`:
 version: '3.8'
 
 services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: ifrit
+      POSTGRES_USER: ifrit_user
+      POSTGRES_PASSWORD: your_secure_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - ifrit-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ifrit_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   ifrit:
     build: .
     ports:
@@ -295,6 +598,9 @@ services:
     environment:
       IFRIT_PROXY_TARGET: "http://backend:3000"
       IFRIT_MODE: "detection"
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - ifrit-network
@@ -309,6 +615,9 @@ services:
 networks:
   ifrit-network:
     driver: bridge
+
+volumes:
+  postgres_data:
 ```
 
 Run:
@@ -355,7 +664,7 @@ config/default.json
 }
 ```
 
-### Production Configuration (Normal Mode)
+### Production Configuration (Normal Mode - SQLite)
 ```json
 {
   "server": {
@@ -412,6 +721,44 @@ config/default.json
 }
 ```
 
+### Production Configuration (PostgreSQL)
+```json
+{
+  "server": {
+    "listen_addr": "0.0.0.0:8080",
+    "api_listen_addr": "127.0.0.1:8443",
+    "proxy_target": "http://app-backend:3000"
+  },
+  "database": {
+    "type": "postgres",
+    "host": "localhost",
+    "port": 5432,
+    "user": "ifrit_user",
+    "password": "your_secure_password",
+    "dbname": "ifrit"
+  },
+  "llm": {
+    "primary": "claude",
+    "claude": {
+      "api_key": "sk-ant-YOUR-KEY-HERE",
+      "model": "claude-3-5-haiku-20241022"
+    }
+  },
+  "detection": {
+    "mode": "detection",
+    "enable_local_rules": true,
+    "enable_llm": true
+  },
+  "execution_mode": {
+    "mode": "deception"
+  },
+  "system": {
+    "log_dir": "./logs",
+    "log_level": "info"
+  }
+}
+```
+
 ### Configuration Parameters
 
 #### Server Section
@@ -424,6 +771,21 @@ config/default.json
     "multi_app_mode": false,          // Multi-app support
     "app_id_header": "X-App-ID",      // App ID header
     "app_id_fallback": "default"      // Default app ID
+  }
+}
+```
+
+#### Database Section (NEW in 0.3.0)
+```json
+{
+  "database": {
+    "type": "sqlite",                 // "sqlite" or "postgres"
+    "path": "./data/ifrit.db",        // SQLite only
+    "host": "localhost",              // PostgreSQL only
+    "port": 5432,                     // PostgreSQL only
+    "user": "ifrit_user",             // PostgreSQL only
+    "password": "password",           // PostgreSQL only
+    "dbname": "ifrit"                 // PostgreSQL only
   }
 }
 ```
@@ -492,6 +854,7 @@ export IFRIT_TARGET="http://backend:8080"
 export IFRIT_MODE="deception"
 export IFRIT_DEBUG="false"
 export CLAUDE_API_KEY="sk-ant-..."
+export IFRIT_DB_PASSWORD="your_password"
 ```
 
 ---
@@ -507,7 +870,7 @@ export CLAUDE_API_KEY="sk-ant-..."
      ▼
 ┌──────────────┐
 │ IFRIT Proxy  │
-└-────┬────────┘
+└─────┬────────┘
       │ http://localhost:3000
       ▼
 ┌──────────────┐
@@ -515,7 +878,7 @@ export CLAUDE_API_KEY="sk-ant-..."
 └──────────────┘
 ```
 
-### Behind Load Balancer (Production) - NOT EXTENSIVELY TESTED YET
+### Behind Load Balancer (Production)
 ```
 ┌─────────┐
 │ Internet│
@@ -524,22 +887,21 @@ export CLAUDE_API_KEY="sk-ant-..."
      ▼
 ┌──────────────────┐
 │ Load Balancer    │
-└─-───┬────────────┘
-      │
-      ├─── IFRIT 1 :8080
-      ├─── IFRIT 2 :8080
-      └─── IFRIT 3 :8080
-          │
-          ▼
-     ┌──────────────┐
-     │ Backend App  │
-     └──────────────┘
+└──────┬───────────┘
+       │
+       ├─── IFRIT 1 :8080
+       ├─── IFRIT 2 :8080
+       └─── IFRIT 3 :8080
+           │
+           ▼
+      ┌──────────────┐
+      │ Backend App  │
+      └──────────────┘
 ```
 
-### High Availability (Multi-Instance) - NOT EXTENSIVELY TESTED YET
+### High Availability with PostgreSQL
 ```
-Multiple IFRIT instances sharing database
-(requires network-mounted SQLite or PostgreSQL)
+Multiple IFRIT instances sharing PostgreSQL database
 
 ┌─────────┐
 │ Load    │
@@ -547,7 +909,7 @@ Multiple IFRIT instances sharing database
 └────┬────┘
      │
      ├─── IFRIT 1 ──┐
-     ├─── IFRIT 2 ──┼─── Shared DB (NFS/Network)
+     ├─── IFRIT 2 ──┼─── PostgreSQL (Shared DB)
      └─── IFRIT 3 ──┘
 ```
 
@@ -563,6 +925,9 @@ Allow TCP 8080 from 0.0.0.0/0
 # Restrict API to internal network only
 Allow TCP 8443 from 10.0.0.0/8
 Allow TCP 8443 from 192.168.0.0/16
+
+# PostgreSQL (if remote)
+Allow TCP 5432 from IFRIT_SERVERS only
 ```
 
 ### Outbound Rules
@@ -573,6 +938,9 @@ Allow TCP 443 to generativelanguage.googleapis.com
 
 # Allow DNS
 Allow UDP 53 to 0.0.0.0/0
+
+# PostgreSQL (if remote)
+Allow TCP 5432 to POSTGRES_SERVER
 ```
 
 ### UFW (Ubuntu Firewall)
@@ -589,6 +957,9 @@ sudo ufw allow 8080/tcp
 # Allow API from internal only
 sudo ufw allow from 10.0.0.0/8 to any port 8443
 
+# PostgreSQL (if remote)
+sudo ufw allow from IFRIT_IP to any port 5432
+
 sudo ufw enable
 sudo ufw status
 ```
@@ -604,6 +975,9 @@ go version
 
 # Verify SQLite
 sqlite3 --version
+
+# Verify PostgreSQL (if using)
+psql --version
 
 # Verify binaries built
 ls -la ifrit ifrit-cli
@@ -634,6 +1008,15 @@ pkill ifrit
 
 # View exceptions
 ./ifrit-cli exception list
+```
+
+### Check Database
+```bash
+# SQLite
+sqlite3 ./data/ifrit.db "SELECT COUNT(*) FROM attack_instances;"
+
+# PostgreSQL
+psql -U ifrit_user -d ifrit -h localhost -c "SELECT COUNT(*) FROM attack_instances;"
 ```
 
 ### Check Logs
@@ -682,7 +1065,7 @@ kill -9 <PID>
 netstat -tlnp | grep 8080
 ```
 
-### Database Locked
+### Database Locked (SQLite)
 
 **Error:**
 ```
@@ -777,16 +1160,19 @@ permission denied
 
 **Solution:**
 ```bash
-# Fix permissions
+# SQLite
 chmod 600 data/ifrit.db
 chown ifrit:ifrit data/ifrit.db  # If running as ifrit user
+
+# PostgreSQL
+# Check pg_hba.conf for authentication settings
 ```
 
 ---
 
 ## Upgrading IFRIT
 
-### From 0.1.0 to 0.1.1
+### From 0.2.0 to 0.3.0
 ```bash
 # Stop IFRIT
 pkill ifrit
@@ -805,16 +1191,35 @@ go build -o ifrit-cli ./cmd/ifrit-cli
 ./ifrit-cli db stats
 ```
 
+**What's New in 0.3.0:**
+- ✅ PostgreSQL support
+- ✅ Multi-database architecture
+- ✅ CLI works with both databases
+- ✅ Improved foreign key handling
+- ✅ Better NULL handling for pattern IDs
+
 ### Configuration Migration
 
-Configuration format is backward compatible. Existing `config/default.json` will work, but you can add new options:
+Configuration format is mostly backward compatible. New database section:
 ```json
 {
-  "detection": {
-    "skip_body_check_on_whitelist": false  // NEW in 0.1.1
-  },
-  "system": {
-    "debug": false  // NEW in 0.1.1
+  "database": {
+    "type": "sqlite",           // NEW: specify database type
+    "path": "./data/ifrit.db"   // Existing SQLite path
+  }
+}
+```
+
+For PostgreSQL:
+```json
+{
+  "database": {
+    "type": "postgres",
+    "host": "localhost",
+    "port": 5432,
+    "user": "ifrit_user",
+    "password": "your_password",
+    "dbname": "ifrit"
   }
 }
 ```
@@ -838,7 +1243,14 @@ sudo systemctl daemon-reload
 
 ### Remove Data
 ```bash
+# SQLite
 rm -rf data/ logs/ config/
+
+# PostgreSQL
+psql -U postgres << EOF
+DROP DATABASE ifrit;
+DROP USER ifrit_user;
+EOF
 ```
 
 ### Remove User (if created)
@@ -852,9 +1264,10 @@ sudo userdel -r ifrit
 
 1. **Read FEATURES.md** - Understand all capabilities
 2. **Configure for your environment** - Adjust proxy_target, whitelist_paths
-3. **Start in Onboarding Mode** - Zero false positives guarantee
-4. **Monitor for 1 week** - Let IFRIT learn your traffic
-5. **Switch to Normal Mode** - Full detection enabled
+3. **Choose your database** - SQLite for simple, PostgreSQL for production
+4. **Start in Onboarding Mode** - Zero false positives guarantee
+5. **Monitor for 1 week** - Let IFRIT learn your traffic
+6. **Switch to Normal Mode** - Full detection enabled
 
 See START_HERE.md for more guidance.
 
@@ -863,9 +1276,9 @@ See START_HERE.md for more guidance.
 ## Getting Help
 
 - **Docs:** See docs/ directory
-- **Email:** ifrit@0t.systems (Please report any bugs/issues in the documentation if any)
+- **Email:** ifrit@0t.systems
 
 ---
 
-**Last Updated:** November 7, 2025  
-**Version:** 0.1.1
+**Last Updated:** December 1st, 2025  
+**Version:** 0.3.0

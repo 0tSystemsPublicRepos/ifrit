@@ -397,7 +397,7 @@ Check Notification Rules
 - Builds attacker profiles
 
 **Data Layer**
-- SQLite database (local, no external deps)
+- SQLite/PostgreSQL database (local, no external deps)
 - Stores exceptions, patterns, attacks, profiles, threat intelligence
 - Fast pattern matching optimized queries
 - Foreign key relationships for data integrity

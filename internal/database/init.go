@@ -243,7 +243,7 @@ func createAllTables(db *sql.DB) error {
 			)`,
 		},
 		{
-                        name: "threat_intelligence",
+			name: "threat_intelligence",
 			schema: `CREATE TABLE IF NOT EXISTS threat_intelligence (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				app_id TEXT DEFAULT 'default',	
@@ -272,10 +272,9 @@ func createAllTables(db *sql.DB) error {
 				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 				updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 				
-				UNIQUE(app_id, source_ip),
-				FOREIGN KEY(app_id, source_ip) REFERENCES attacker_profiles(app_id, source_ip)                       
-                        )`,     
-                },
+				UNIQUE(app_id, source_ip)
+			)`,
+		},
 		{
 			name: "intel_collection_templates",
 			schema: `CREATE TABLE IF NOT EXISTS intel_collection_templates (
@@ -325,6 +324,85 @@ func createAllTables(db *sql.DB) error {
 				UNIQUE(user_id, token_name)
 			)`,
 		},
+		// NEW TABLES FOR CONFIG IN DB AND KEYCLOAK
+		{
+			name: "config_settings",
+			schema: `CREATE TABLE IF NOT EXISTS config_settings (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				app_id TEXT DEFAULT 'default',
+				category TEXT NOT NULL,
+				key TEXT NOT NULL,
+				value TEXT NOT NULL,
+				data_type TEXT,
+				is_sensitive BOOLEAN DEFAULT 0,
+				description TEXT,
+				updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+				updated_by TEXT,
+				
+				UNIQUE(app_id, category, key)
+			)`,
+		},
+		{
+			name: "keycloak_config",
+			schema: `CREATE TABLE IF NOT EXISTS keycloak_config (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				app_id TEXT DEFAULT 'default',
+				realm TEXT NOT NULL,
+				auth_server_url TEXT NOT NULL,
+				client_id TEXT NOT NULL,
+				client_secret TEXT,
+				enabled BOOLEAN DEFAULT 1,
+				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+				
+				UNIQUE(app_id)
+			)`,
+		},
+		{
+			name: "keycloak_role_mappings",
+			schema: `CREATE TABLE IF NOT EXISTS keycloak_role_mappings (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				app_id TEXT DEFAULT 'default',
+				keycloak_role TEXT NOT NULL,
+				ifrit_permissions TEXT,
+				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+				
+				UNIQUE(app_id, keycloak_role)
+			)`,
+		},
+		{
+			name: "service_tokens",
+			schema: `CREATE TABLE IF NOT EXISTS service_tokens (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				app_id TEXT DEFAULT 'default',
+				token_name TEXT NOT NULL,
+				token_hash TEXT NOT NULL,
+				token_prefix TEXT,
+				keycloak_service_account_id TEXT,
+				permissions TEXT,
+				is_active BOOLEAN DEFAULT 1,
+				expires_at TIMESTAMP,
+				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+				last_used_at TIMESTAMP,
+				
+				UNIQUE(token_hash)
+			)`,
+		},
+		{
+			name: "webhooks_config",
+			schema: `CREATE TABLE IF NOT EXISTS webhooks_config (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				app_id TEXT DEFAULT 'default',
+				endpoint TEXT NOT NULL,
+				auth_type TEXT,
+				auth_value TEXT,
+				enabled BOOLEAN DEFAULT 1,
+				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+				
+				UNIQUE(app_id, endpoint)
+			)`,
+		},
 	}
 
 	for _, table := range tables {
@@ -364,7 +442,7 @@ func createIndexes(db *sql.DB) error {
 		{"idx_learning_requests_ip", "CREATE INDEX IF NOT EXISTS idx_learning_requests_ip ON learning_mode_requests(source_ip)"},
 		{"idx_learning_requests_fingerprint", "CREATE INDEX IF NOT EXISTS idx_learning_requests_fingerprint ON learning_mode_requests(fingerprint)"},
 
-		// NEW APP_ID INDEXES
+		// APP_ID INDEXES
 		{"idx_app_attack_type", "CREATE INDEX IF NOT EXISTS idx_app_attack_type ON attack_patterns(app_id, attack_type)"},
 		{"idx_app_body_hash", "CREATE INDEX IF NOT EXISTS idx_app_body_hash ON attack_patterns(app_id, body_signature)"},
 		{"idx_app_attack_instance", "CREATE INDEX IF NOT EXISTS idx_app_attack_instance ON attack_instances(app_id, source_ip)"},
@@ -384,6 +462,16 @@ func createIndexes(db *sql.DB) error {
 		{"idx_threat_cached_until", "CREATE INDEX IF NOT EXISTS idx_threat_cached_until ON threat_intelligence(cached_until)"},
 		{"idx_threat_updated", "CREATE INDEX IF NOT EXISTS idx_threat_updated ON threat_intelligence(updated_at DESC)"},
 
+		// NEW INDEXES FOR CONFIG AND KEYCLOAK
+		{"idx_config_app_category", "CREATE INDEX IF NOT EXISTS idx_config_app_category ON config_settings(app_id, category)"},
+		{"idx_config_sensitive", "CREATE INDEX IF NOT EXISTS idx_config_sensitive ON config_settings(is_sensitive)"},
+		{"idx_keycloak_app", "CREATE INDEX IF NOT EXISTS idx_keycloak_app ON keycloak_config(app_id)"},
+		{"idx_role_mapping_app", "CREATE INDEX IF NOT EXISTS idx_role_mapping_app ON keycloak_role_mappings(app_id, keycloak_role)"},
+		{"idx_service_tokens_app", "CREATE INDEX IF NOT EXISTS idx_service_tokens_app ON service_tokens(app_id)"},
+		{"idx_service_tokens_active", "CREATE INDEX IF NOT EXISTS idx_service_tokens_active ON service_tokens(is_active)"},
+		{"idx_service_tokens_hash", "CREATE INDEX IF NOT EXISTS idx_service_tokens_hash ON service_tokens(token_hash)"},
+		{"idx_webhooks_app", "CREATE INDEX IF NOT EXISTS idx_webhooks_app ON webhooks_config(app_id)"},
+		{"idx_webhooks_enabled", "CREATE INDEX IF NOT EXISTS idx_webhooks_enabled ON webhooks_config(enabled)"},
 	}
 
 	for _, idx := range indexes {

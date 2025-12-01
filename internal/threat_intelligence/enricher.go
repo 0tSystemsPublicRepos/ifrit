@@ -13,9 +13,10 @@ import (
 	"github.com/0tSystemsPublicRepos/ifrit/internal/logging"
 )
 
+
 type Enricher struct {
 	config *config.ThreatIntelligenceConfig
-	db     *database.SQLiteDB
+	db     database.DatabaseProvider
 	client *http.Client
 	mu     sync.RWMutex
 }
@@ -67,7 +68,13 @@ type PrivacyData struct {
 	Type    string
 }
 
-func NewEnricher(cfg *config.ThreatIntelligenceConfig, db *database.SQLiteDB) *Enricher {
+// SetDatabase sets the database provider for the enricher
+func (e *Enricher) SetDatabase(db database.DatabaseProvider) {
+	e.db = db
+}
+
+
+func NewEnricher(cfg *config.ThreatIntelligenceConfig, db database.DatabaseProvider) *Enricher {
 	return &Enricher{
 		config: cfg,
 		db:     db,

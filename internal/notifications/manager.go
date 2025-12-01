@@ -11,13 +11,17 @@ import (
 type Manager struct {
 	providers []NotificationProvider
 	config    config.NotificationsConfig
+	db        database.DatabaseProvider
 	mu        sync.RWMutex
 }
 
-func NewManager(cfg *config.Config, db *database.SQLiteDB) *Manager {
+
+
+func NewManager(cfg *config.Config, db database.DatabaseProvider) *Manager {
 	manager := &Manager{
 		providers: []NotificationProvider{},
 		config:    cfg.Notifications,  // Store config
+		db:        db,
 	}
 
 	// Initialize webhook provider
@@ -49,6 +53,17 @@ func NewManager(cfg *config.Config, db *database.SQLiteDB) *Manager {
 	}
 
 	return manager
+}
+
+// SetDatabase sets the database provider for the notification manager
+func (m *Manager) SetDatabase(db database.DatabaseProvider) {
+	m.db = db
+	// Update all webhook providers
+	for _, provider := range m.providers {
+		if wp, ok := provider.(*WebhookProvider); ok {
+			wp.SetDatabase(db)
+		}
+	}
 }
 
 // Send sends notification to all enabled providers based on configured rules

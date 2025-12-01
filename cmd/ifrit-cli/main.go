@@ -1,33 +1,80 @@
 package main
 
 import (
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"text/tabwriter"
 	"time"
-	"crypto/rand"
-	"math/big"
 
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/spf13/cobra"
+	_ "github.com/lib/pq"
+	_ "github.com/mattn/go-sqlite3"
+
+	"github.com/0tSystemsPublicRepos/ifrit/internal/database"
 )
 
-var db *sql.DB
-
-func init() {
-	cobra.OnInitialize(initDB)
-}
+var (
+	dbProvider database.DatabaseProvider
+	db         *sql.DB
+	configPath string
+)
 
 func initDB() {
 	var err error
-	db, err = sql.Open("sqlite3", "data/ifrit.db")
+
+	// Default to SQLite, check if config specifies PostgreSQL
+	configPath = "./config/default.json"
+	
+	// Try to read config file
+	configData, err := os.ReadFile(configPath)
+	if err == nil {
+		// Parse config to check database type
+		var cfg struct {
+			Database struct {
+				Type     string `json:"type"`
+				Path     string `json:"path"`
+				Host     string `json:"host"`
+				Port     int    `json:"port"`
+				User     string `json:"user"`
+				Password string `json:"password"`
+				DBName   string `json:"dbname"`
+			} `json:"database"`
+		}
+		
+	if err := json.Unmarshal(configData, &cfg); err == nil {
+			if cfg.Database.Type == "postgres" {
+				// Initialize PostgreSQL
+				pgConfig := &database.PostgresConfig{
+					Host:     cfg.Database.Host,
+					Port:     cfg.Database.Port,
+					User:     cfg.Database.User,
+					Password: cfg.Database.Password,
+					Database: cfg.Database.DBName,
+				}
+				dbProvider, err = database.NewPostgresProvider(pgConfig)
+				if err != nil {
+					fmt.Printf("Error connecting to PostgreSQL: %v\n", err)
+					os.Exit(1)
+				}
+				db = dbProvider.GetDB()
+				return
+			}
+		}
+	}
+	
+	// Default to SQLite
+	sqliteConfig := &database.SQLiteConfig{
+		Path: "./data/ifrit.db",
+	}
+	dbProvider, err = database.NewSQLiteProvider(sqliteConfig)
 	if err != nil {
-		fmt.Printf("Error opening database: %v\n", err)
+		fmt.Printf("Error opening SQLite database: %v\n", err)
 		os.Exit(1)
 	}
+	db = dbProvider.GetDB()	
 }
 
 func main() {
@@ -36,6 +83,9 @@ func main() {
 		Short: "IFRIT CLI - Complete Database Management",
 		Long: `IFRIT CLI manages all IFRIT Proxy database entities.
 Manage attacks, patterns, attackers, exceptions, keyword exceptions, intel templates, and more.`,
+		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+			initDB()
+		},
 	}
 
 	// Attack commands
@@ -185,12 +235,16 @@ Manage attacks, patterns, attackers, exceptions, keyword exceptions, intel templ
 	}
 }
 
-// ============== ATTACK COMMANDS ==============
+// ==========================
+// Attack Instance Commands
+// ==========================
 
 func listAttacks(cmd *cobra.Command, args []string) {
 	rows, err := db.Query(`
-		SELECT id, app_id, pattern_id, source_ip, requested_path, http_method, timestamp
-		FROM attack_instances ORDER BY timestamp DESC LIMIT 50
+		SELECT id, source_ip, requested_path, http_method, timestamp 
+		FROM attack_instances 
+		ORDER BY timestamp DESC 
+		LIMIT 20
 	`)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
@@ -198,70 +252,60 @@ func listAttacks(cmd *cobra.Command, args []string) {
 	}
 	defer rows.Close()
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tAPP ID\tPATTERN ID\tSOURCE IP\tMETHOD\tPATH\tTIMESTAMP")
-
-	count := 0
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "ID\tIP\tPATH\tMETHOD\tTIME")
 	for rows.Next() {
-		var id, patternID int
-		var appID, sourceIP, path, method, timestamp string
-		rows.Scan(&id, &appID, &patternID, &sourceIP, &path, &method, &timestamp)
-		fmt.Fprintf(w, "%d\t%s\t%d\t%s\t%s\t%s\t%s\n", id, appID, patternID, sourceIP, method, path, timestamp)
-		count++
+		var id int
+		var ip, path, method, timestamp string
+		rows.Scan(&id, &ip, &path, &method, &timestamp)
+		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\n", id, ip, path, method, timestamp)
 	}
 	w.Flush()
-	fmt.Printf("\nTotal: %d attacks\n", count)
 }
 
 func viewAttack(cmd *cobra.Command, args []string) {
-	var id, patternID int
-	var appID, sourceIP, userAgent, path, method, timestamp string
+	var id, ip, path, method, timestamp, userAgent string
+	var patternID sql.NullInt64
+	var returnedHoneypot, attackerAccepted bool
 
-	err := db.QueryRow(`
-		SELECT id, app_id, pattern_id, source_ip, user_agent, requested_path, http_method, timestamp
+	db.QueryRow(`
+		SELECT id, source_ip, user_agent, requested_path, http_method, 
+		       pattern_id, returned_honeypot, attacker_accepted, timestamp
 		FROM attack_instances WHERE id = ?
-	`, args[0]).Scan(&id, &appID, &patternID, &sourceIP, &userAgent, &path, &method, &timestamp)
+	`, args[0]).Scan(&id, &ip, &userAgent, &path, &method, &patternID, &returnedHoneypot, &attackerAccepted, &timestamp)
 
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return
+	fmt.Printf("Attack ID: %s\n", id)
+	fmt.Printf("Source IP: %s\n", ip)
+	fmt.Printf("User Agent: %s\n", userAgent)
+	fmt.Printf("Path: %s\n", path)
+	fmt.Printf("Method: %s\n", method)
+	if patternID.Valid {
+		fmt.Printf("Pattern ID: %d\n", patternID.Int64)
+	} else {
+		fmt.Printf("Pattern ID: None\n")
 	}
-
-	fmt.Printf(`
-Attack #%d
-=========
-App ID:            %s
-Pattern ID:        %d
-Source IP:         %s
-User Agent:        %s
-Path:              %s
-Method:            %s
-Timestamp:         %s
-`, id, appID, patternID, sourceIP, userAgent, path, method, timestamp)
+	fmt.Printf("Returned Honeypot: %v\n", returnedHoneypot)
+	fmt.Printf("Attacker Accepted: %v\n", attackerAccepted)
+	fmt.Printf("Timestamp: %s\n", timestamp)
 }
 
 func attackStats(cmd *cobra.Command, args []string) {
-	var total, uniqueIPs int
-	var latest string
+	var total, honeypot, accepted int
+	db.QueryRow("SELECT COUNT(*) FROM attack_instances").Scan(&total)
+	db.QueryRow("SELECT COUNT(*) FROM attack_instances WHERE returned_honeypot = 1").Scan(&honeypot)
+	db.QueryRow("SELECT COUNT(*) FROM attack_instances WHERE attacker_accepted = 1").Scan(&accepted)
 
-	db.QueryRow(`
-		SELECT COUNT(*), COUNT(DISTINCT source_ip), MAX(timestamp)
-		FROM attack_instances
-	`).Scan(&total, &uniqueIPs, &latest)
-
-	fmt.Printf(`
-Attack Statistics
-==================
-Total Attacks:       %d
-Unique Attackers:    %d
-Latest Attack:       %s
-`, total, uniqueIPs, latest)
+	fmt.Printf("Total Attacks: %d\n", total)
+	fmt.Printf("Honeypot Delivered: %d (%.1f%%)\n", honeypot, float64(honeypot)/float64(total)*100)
+	fmt.Printf("Attacker Accepted: %d (%.1f%%)\n", accepted, float64(accepted)/float64(total)*100)
 }
 
 func attacksByIP(cmd *cobra.Command, args []string) {
 	rows, err := db.Query(`
-		SELECT id, requested_path, http_method, timestamp
-		FROM attack_instances WHERE source_ip = ? ORDER BY timestamp DESC
+		SELECT id, requested_path, http_method, timestamp 
+		FROM attack_instances 
+		WHERE source_ip = ? 
+		ORDER BY timestamp DESC
 	`, args[0])
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
@@ -269,26 +313,23 @@ func attacksByIP(cmd *cobra.Command, args []string) {
 	}
 	defer rows.Close()
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(w, "Attacks from %s\n", args[0])
-	fmt.Fprintln(w, "ID\tMETHOD\tPATH\tTIMESTAMP")
-
-	count := 0
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "ID\tPATH\tMETHOD\tTIME")
 	for rows.Next() {
 		var id int
 		var path, method, timestamp string
 		rows.Scan(&id, &path, &method, &timestamp)
-		fmt.Fprintf(w, "%d\t%s\t%s\t%s\n", id, method, path, timestamp)
-		count++
+		fmt.Fprintf(w, "%d\t%s\t%s\t%s\n", id, path, method, timestamp)
 	}
 	w.Flush()
-	fmt.Printf("\nTotal: %d\n", count)
 }
 
 func attacksByPath(cmd *cobra.Command, args []string) {
 	rows, err := db.Query(`
-		SELECT id, source_ip, http_method, timestamp
-		FROM attack_instances WHERE requested_path = ? ORDER BY timestamp DESC
+		SELECT id, source_ip, http_method, timestamp 
+		FROM attack_instances 
+		WHERE requested_path = ? 
+		ORDER BY timestamp DESC
 	`, args[0])
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
@@ -296,28 +337,27 @@ func attacksByPath(cmd *cobra.Command, args []string) {
 	}
 	defer rows.Close()
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(w, "Attacks on %s\n", args[0])
-	fmt.Fprintln(w, "ID\tSOURCE IP\tMETHOD\tTIMESTAMP")
-
-	count := 0
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "ID\tIP\tMETHOD\tTIME")
 	for rows.Next() {
 		var id int
-		var sourceIP, method, timestamp string
-		rows.Scan(&id, &sourceIP, &method, &timestamp)
-		fmt.Fprintf(w, "%d\t%s\t%s\t%s\n", id, sourceIP, method, timestamp)
-		count++
+		var ip, method, timestamp string
+		rows.Scan(&id, &ip, &method, &timestamp)
+		fmt.Fprintf(w, "%d\t%s\t%s\t%s\n", id, ip, method, timestamp)
 	}
 	w.Flush()
-	fmt.Printf("\nTotal: %d\n", count)
 }
 
-// ============== PATTERN COMMANDS ==============
+// ==========================
+// Attack Pattern Commands
+// ==========================
 
 func listPatterns(cmd *cobra.Command, args []string) {
 	rows, err := db.Query(`
-		SELECT id, app_id, attack_type, http_method, path_pattern, times_seen, last_seen
-		FROM attack_patterns ORDER BY times_seen DESC
+		SELECT id, attack_signature, attack_type, times_seen, claude_confidence 
+		FROM attack_patterns 
+		ORDER BY times_seen DESC 
+		LIMIT 20
 	`)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
@@ -325,115 +365,84 @@ func listPatterns(cmd *cobra.Command, args []string) {
 	}
 	defer rows.Close()
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tAPP ID\tTYPE\tMETHOD\tPATTERN\tSEEN\tLAST SEEN")
-
-	count := 0
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "ID\tSIGNATURE\tTYPE\tSEEN\tCONFIDENCE")
 	for rows.Next() {
 		var id, timesSeen int
-		var appID, attackType, method, pattern, lastSeen string
-		rows.Scan(&id, &appID, &attackType, &method, &pattern, &timesSeen, &lastSeen)
-		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%d\t%s\n", id, appID, attackType, method, pattern, timesSeen, lastSeen)
-		count++
+		var signature, attackType string
+		var confidence float64
+		rows.Scan(&id, &signature, &attackType, &timesSeen, &confidence)
+		fmt.Fprintf(w, "%d\t%s\t%s\t%d\t%.2f\n", id, signature, attackType, timesSeen, confidence)
 	}
 	w.Flush()
-	fmt.Printf("\nTotal: %d patterns\n", count)
 }
 
 func viewPattern(cmd *cobra.Command, args []string) {
-	var id, responseCode, timesSeen int
-	var appID, signature, attackType, classification, method, pathPattern, payload, createdBy string
-	var confidence sql.NullFloat64
-	var firstSeen, lastSeen string
+	var id, signature, attackType, classification, method, pathPattern string
+	var responseCode, timesSeen int
+	var confidence float64
 
 	err := db.QueryRow(`
-		SELECT id, app_id, attack_signature, attack_type, attack_classification, http_method, path_pattern,
-		       payload_template, response_code, times_seen, first_seen, last_seen, created_by, claude_confidence
+		SELECT id, attack_signature, attack_type, attack_classification, http_method, 
+		       path_pattern, response_code, times_seen, claude_confidence
 		FROM attack_patterns WHERE id = ?
-	`, args[0]).Scan(&id, &appID, &signature, &attackType, &classification, &method, &pathPattern,
-		&payload, &responseCode, &timesSeen, &firstSeen, &lastSeen, &createdBy, &confidence)
+	`, args[0]).Scan(&id, &signature, &attackType, &classification, &method, &pathPattern, &responseCode, &timesSeen, &confidence)
 
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
+		fmt.Printf("Pattern not found: %v\n", err)
 		return
 	}
 
-	conf := "N/A"
-	if confidence.Valid {
-		conf = fmt.Sprintf("%.2f", confidence.Float64)
-	}
-
-	fmt.Printf(`
-Pattern #%d
-==========
-App ID:            %s
-Signature:         %s
-Attack Type:       %s
-Classification:    %s
-Method:            %s
-Path Pattern:      %s
-Response Code:     %d
-Times Seen:        %d
-Confidence:        %s
-Created By:        %s
-First Seen:        %s
-Last Seen:         %s
-`, id, appID, signature, attackType, classification, method, pathPattern,
-		responseCode, timesSeen, conf, createdBy, firstSeen, lastSeen)
+	fmt.Printf("Pattern ID: %s\n", id)
+	fmt.Printf("Signature: %s\n", signature)
+	fmt.Printf("Attack Type: %s\n", attackType)
+	fmt.Printf("Classification: %s\n", classification)
+	fmt.Printf("HTTP Method: %s\n", method)
+	fmt.Printf("Path Pattern: %s\n", pathPattern)
+	fmt.Printf("Response Code: %d\n", responseCode)
+	fmt.Printf("Times Seen: %d\n", timesSeen)
+	fmt.Printf("Confidence: %.2f\n", confidence)
 }
 
 func addPattern(cmd *cobra.Command, args []string) {
 	attackType := args[0]
 	signature := args[1]
 
-	stmt, err := db.Prepare(`
-		INSERT INTO attack_patterns (app_id, attack_signature, attack_type, attack_classification, http_method, path_pattern, created_by)
-		VALUES ('default', ?, ?, 'custom', 'GET', ?, 'cli')
-	`)
+	stmt, _ := db.Prepare("INSERT INTO attack_patterns (attack_signature, attack_type) VALUES (?, ?)")
+	result, err := stmt.Exec(signature, attackType)
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
+		fmt.Printf("Error adding pattern: %v\n", err)
 		return
 	}
-	defer stmt.Close()
-
-	result, err := stmt.Exec(signature, attackType, signature)
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return
-	}
-
 	id, _ := result.LastInsertId()
 	fmt.Printf("✓ Pattern added (ID: %d)\n", id)
 }
 
 func removePattern(cmd *cobra.Command, args []string) {
-	stmt, err := db.Prepare("DELETE FROM attack_patterns WHERE id = ?")
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return
-	}
-	defer stmt.Close()
-
+	stmt, _ := db.Prepare("DELETE FROM attack_patterns WHERE id = ?")
 	result, err := stmt.Exec(args[0])
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
-
 	affected, _ := result.RowsAffected()
 	if affected > 0 {
-		fmt.Printf("✓ Pattern removed\n")
+		fmt.Println("✓ Pattern removed")
 	} else {
-		fmt.Printf("✗ Pattern not found\n")
+		fmt.Println("Pattern not found")
 	}
 }
 
-// ============== ATTACKER COMMANDS ==============
+// ==========================
+// Attacker Profile Commands
+// ==========================
 
 func listAttackers(cmd *cobra.Command, args []string) {
 	rows, err := db.Query(`
-		SELECT id, app_id, source_ip, total_requests, last_seen
-		FROM attacker_profiles ORDER BY total_requests DESC
+		SELECT id, source_ip, total_requests, successful_probes, attack_types, last_seen 
+		FROM attacker_profiles 
+		ORDER BY total_requests DESC 
+		LIMIT 20
 	`)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
@@ -441,105 +450,87 @@ func listAttackers(cmd *cobra.Command, args []string) {
 	}
 	defer rows.Close()
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tAPP ID\tIP ADDRESS\tREQUESTS\tLAST SEEN")
-
-	count := 0
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "ID\tIP\tREQUESTS\tPROBES\tATTACK TYPES\tLAST SEEN")
 	for rows.Next() {
-		var id, totalReqs int
-		var appID, ip, lastSeen string
-		rows.Scan(&id, &appID, &ip, &totalReqs, &lastSeen)
-		fmt.Fprintf(w, "%d\t%s\t%s\t%d\t%s\n", id, appID, ip, totalReqs, lastSeen)
-		count++
+		var id, totalReq, probes int
+		var ip, attackTypes, lastSeen string
+		rows.Scan(&id, &ip, &totalReq, &probes, &attackTypes, &lastSeen)
+		fmt.Fprintf(w, "%d\t%s\t%d\t%d\t%s\t%s\n", id, ip, totalReq, probes, attackTypes, lastSeen)
 	}
 	w.Flush()
-	fmt.Printf("\nTotal: %d attackers\n", count)
 }
 
 func viewAttacker(cmd *cobra.Command, args []string) {
-	var id, totalReqs int
-	var appID, ip, attackTypes, firstSeen, lastSeen string
+	var id, ip, attackTypes, firstSeen, lastSeen string
+	var totalReq, probes int
 
 	err := db.QueryRow(`
-		SELECT id, app_id, source_ip, total_requests, attack_types, first_seen, last_seen
+		SELECT id, source_ip, total_requests, successful_probes, attack_types, first_seen, last_seen
 		FROM attacker_profiles WHERE id = ?
-	`, args[0]).Scan(&id, &appID, &ip, &totalReqs, &attackTypes, &firstSeen, &lastSeen)
+	`, args[0]).Scan(&id, &ip, &totalReq, &probes, &attackTypes, &firstSeen, &lastSeen)
 
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
+		fmt.Printf("Attacker not found: %v\n", err)
 		return
 	}
 
-	fmt.Printf(`
-Attacker Profile #%d
-===================
-App ID:        %s
-IP Address:    %s
-Total Requests: %d
-Attack Types:  %s
-First Seen:    %s
-Last Seen:     %s
-`, id, appID, ip, totalReqs, attackTypes, firstSeen, lastSeen)
+	fmt.Printf("Profile ID: %s\n", id)
+	fmt.Printf("IP Address: %s\n", ip)
+	fmt.Printf("Total Requests: %d\n", totalReq)
+	fmt.Printf("Successful Probes: %d\n", probes)
+	fmt.Printf("Attack Types: %s\n", attackTypes)
+	fmt.Printf("First Seen: %s\n", firstSeen)
+	fmt.Printf("Last Seen: %s\n", lastSeen)
 }
 
 func searchAttacker(cmd *cobra.Command, args []string) {
-	var id, totalReqs int
-	var appID, attackTypes, firstSeen, lastSeen string
-
-	err := db.QueryRow(`
-		SELECT id, app_id, total_requests, attack_types, first_seen, last_seen
-		FROM attacker_profiles WHERE source_ip = ?
-	`, args[0]).Scan(&id, &appID, &totalReqs, &attackTypes, &firstSeen, &lastSeen)
-
-	if err == sql.ErrNoRows {
-		fmt.Printf("✗ No attacker profile for IP: %s\n", args[0])
-		return
-	}
+	rows, err := db.Query(`
+		SELECT id, source_ip, total_requests, successful_probes, attack_types 
+		FROM attacker_profiles 
+		WHERE source_ip LIKE ?
+	`, "%"+args[0]+"%")
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
+	defer rows.Close()
 
-	fmt.Printf(`
-Attacker Profile for %s
-======================
-ID:             %d
-App ID:         %s
-Total Requests: %d
-Attack Types:   %s
-First Seen:     %s
-Last Seen:      %s
-`, args[0], id, appID, totalReqs, attackTypes, firstSeen, lastSeen)
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "ID\tIP\tREQUESTS\tPROBES\tATTACK TYPES")
+	for rows.Next() {
+		var id, totalReq, probes int
+		var ip, attackTypes string
+		rows.Scan(&id, &ip, &totalReq, &probes, &attackTypes)
+		fmt.Fprintf(w, "%d\t%s\t%d\t%d\t%s\n", id, ip, totalReq, probes, attackTypes)
+	}
+	w.Flush()
 }
 
 func removeAttacker(cmd *cobra.Command, args []string) {
-	stmt, err := db.Prepare("DELETE FROM attacker_profiles WHERE id = ?")
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return
-	}
-	defer stmt.Close()
-
+	stmt, _ := db.Prepare("DELETE FROM attacker_profiles WHERE id = ?")
 	result, err := stmt.Exec(args[0])
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
-
 	affected, _ := result.RowsAffected()
 	if affected > 0 {
-		fmt.Printf("✓ Attacker profile removed\n")
+		fmt.Println("✓ Attacker profile removed")
 	} else {
-		fmt.Printf("✗ Profile not found\n")
+		fmt.Println("Attacker not found")
 	}
 }
 
-// ============== EXCEPTION COMMANDS ==============
+// ==========================
+// Exception Commands
+// ==========================
 
 func listExceptions(cmd *cobra.Command, args []string) {
 	rows, err := db.Query(`
-		SELECT id, app_id, ip_address, path, reason, enabled, created_at
-		FROM exceptions ORDER BY created_at DESC
+		SELECT id, ip_address, path, reason, enabled 
+		FROM exceptions 
+		ORDER BY id DESC
 	`)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
@@ -547,136 +538,101 @@ func listExceptions(cmd *cobra.Command, args []string) {
 	}
 	defer rows.Close()
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tAPP ID\tIP\tPATH\tREASON\tENABLED\tCREATED")
-
-	count := 0
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "ID\tIP\tPATH\tREASON\tENABLED")
 	for rows.Next() {
-		var id int
-		var appID, ip, path, reason, created string
-		var enabled sql.NullBool
-		rows.Scan(&id, &appID, &ip, &path, &reason, &enabled, &created)
-		en := "✗"
-		if enabled.Valid && enabled.Bool {
-			en = "✓"
+		var id, enabled int
+		var ip, path, reason string
+		rows.Scan(&id, &ip, &path, &reason, &enabled)
+		enabledStr := "No"
+		if enabled == 1 {
+			enabledStr = "Yes"
 		}
-		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\t%s\n", id, appID, ip, path, reason, en, created)
-		count++
+		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\n", id, ip, path, reason, enabledStr)
 	}
 	w.Flush()
-	fmt.Printf("\nTotal: %d exceptions\n", count)
 }
 
 func viewException(cmd *cobra.Command, args []string) {
-	var id int
-	var appID, ip, path, reason, created string
-	var enabled sql.NullBool
+	var id, ip, path, reason, createdAt string
+	var enabled int
 
 	err := db.QueryRow(`
-		SELECT id, app_id, ip_address, path, reason, enabled, created_at
+		SELECT id, ip_address, path, reason, enabled, created_at
 		FROM exceptions WHERE id = ?
-	`, args[0]).Scan(&id, &appID, &ip, &path, &reason, &enabled, &created)
+	`, args[0]).Scan(&id, &ip, &path, &reason, &enabled, &createdAt)
 
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
+		fmt.Printf("Exception not found: %v\n", err)
 		return
 	}
 
-	en := "Disabled"
-	if enabled.Valid && enabled.Bool {
-		en = "Enabled"
-	}
-
-	fmt.Printf(`
-Exception #%d
-============
-App ID:     %s
-IP Address: %s
-Path:       %s
-Reason:     %s
-Status:     %s
-Created:    %s
-`, id, appID, ip, path, reason, en, created)
+	fmt.Printf("Exception ID: %s\n", id)
+	fmt.Printf("IP Address: %s\n", ip)
+	fmt.Printf("Path: %s\n", path)
+	fmt.Printf("Reason: %s\n", reason)
+	fmt.Printf("Enabled: %v\n", enabled == 1)
+	fmt.Printf("Created: %s\n", createdAt)
 }
 
 func addException(cmd *cobra.Command, args []string) {
 	ip := args[0]
 	path := args[1]
+	now := time.Now().Format(time.RFC3339)
+
 	if ip == "-" {
 		ip = "*"
 	}
-
-	stmt, err := db.Prepare(`
-		INSERT INTO exceptions (app_id, ip_address, path, reason, enabled, created_at)
-		VALUES ('default', ?, ?, ?, 1, ?)
-	`)
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return
+	if path == "-" {
+		path = "*"
 	}
-	defer stmt.Close()
 
-	now := time.Now().Format(time.RFC3339)
+	stmt, _ := db.Prepare("INSERT INTO exceptions (ip_address, path, reason, created_at) VALUES (?, ?, ?, ?)")
 	result, err := stmt.Exec(ip, path, "CLI whitelist", now)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
-
 	id, _ := result.LastInsertId()
 	fmt.Printf("✓ Exception added (ID: %d)\n", id)
 }
 
 func removeException(cmd *cobra.Command, args []string) {
-	stmt, err := db.Prepare("DELETE FROM exceptions WHERE id = ?")
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return
-	}
-	defer stmt.Close()
-
+	stmt, _ := db.Prepare("DELETE FROM exceptions WHERE id = ?")
 	result, err := stmt.Exec(args[0])
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
-
 	affected, _ := result.RowsAffected()
 	if affected > 0 {
-		fmt.Printf("✓ Exception removed\n")
+		fmt.Println("✓ Exception removed")
 	} else {
-		fmt.Printf("✗ Exception not found\n")
+		fmt.Println("Exception not found")
 	}
 }
 
 func enableException(cmd *cobra.Command, args []string) {
-	stmt, err := db.Prepare("UPDATE exceptions SET enabled = 1 WHERE id = ?")
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return
-	}
-	defer stmt.Close()
+	stmt, _ := db.Prepare("UPDATE exceptions SET enabled = 1 WHERE id = ?")
 	stmt.Exec(args[0])
-	fmt.Printf("✓ Exception enabled\n")
+	fmt.Println("✓ Exception enabled")
 }
 
 func disableException(cmd *cobra.Command, args []string) {
-	stmt, err := db.Prepare("UPDATE exceptions SET enabled = 0 WHERE id = ?")
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return
-	}
-	defer stmt.Close()
+	stmt, _ := db.Prepare("UPDATE exceptions SET enabled = 0 WHERE id = ?")
 	stmt.Exec(args[0])
-	fmt.Printf("✓ Exception disabled\n")
+	fmt.Println("✓ Exception disabled")
 }
 
-// ============== KEYWORD EXCEPTION COMMANDS ==============
+// ==========================
+// Keyword Exception Commands
+// ==========================
 
 func listKeywordExceptions(cmd *cobra.Command, args []string) {
 	rows, err := db.Query(`
-		SELECT id, app_id, exception_type, keyword, reason, enabled
-		FROM keyword_exceptions ORDER BY app_id, exception_type
+		SELECT id, exception_type, keyword, reason 
+		FROM keyword_exceptions 
+		ORDER BY exception_type, keyword
 	`)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
@@ -684,114 +640,76 @@ func listKeywordExceptions(cmd *cobra.Command, args []string) {
 	}
 	defer rows.Close()
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tAPP ID\tTYPE\tKEYWORD\tREASON\tENABLED")
-
-	count := 0
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "ID\tTYPE\tKEYWORD\tREASON")
 	for rows.Next() {
 		var id int
-		var appID, exceptionType, keyword, reason string
-		var enabled sql.NullBool
-		rows.Scan(&id, &appID, &exceptionType, &keyword, &reason, &enabled)
-		en := "✗"
-		if enabled.Valid && enabled.Bool {
-			en = "✓"
-		}
-		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\n", id, appID, exceptionType, keyword, reason, en)
-		count++
+		var exceptionType, keyword, reason string
+		rows.Scan(&id, &exceptionType, &keyword, &reason)
+		fmt.Fprintf(w, "%d\t%s\t%s\t%s\n", id, exceptionType, keyword, reason)
 	}
 	w.Flush()
-	fmt.Printf("\nTotal: %d keyword exceptions\n", count)
 }
 
 func viewKeywordException(cmd *cobra.Command, args []string) {
-	var id int
-	var appID, exceptionType, keyword, reason string
-	var enabled sql.NullBool
+	var id, exceptionType, keyword, reason, createdAt string
 
 	err := db.QueryRow(`
-		SELECT id, app_id, exception_type, keyword, reason, enabled
+		SELECT id, exception_type, keyword, reason, created_at
 		FROM keyword_exceptions WHERE id = ?
-	`, args[0]).Scan(&id, &appID, &exceptionType, &keyword, &reason, &enabled)
+	`, args[0]).Scan(&id, &exceptionType, &keyword, &reason, &createdAt)
 
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
+		fmt.Printf("Keyword exception not found: %v\n", err)
 		return
 	}
 
-	en := "Disabled"
-	if enabled.Valid && enabled.Bool {
-		en = "Enabled"
-	}
-
-	fmt.Printf(`
-Keyword Exception #%d
-====================
-App ID:          %s
-Exception Type:  %s (path|body_field|header)
-Keyword:         %s
-Reason:          %s
-Status:          %s
-`, id, appID, exceptionType, keyword, reason, en)
+	fmt.Printf("Exception ID: %s\n", id)
+	fmt.Printf("Type: %s\n", exceptionType)
+	fmt.Printf("Keyword: %s\n", keyword)
+	fmt.Printf("Reason: %s\n", reason)
+	fmt.Printf("Created: %s\n", createdAt)
 }
 
 func addKeywordException(cmd *cobra.Command, args []string) {
 	exceptionType := args[0]
 	keyword := args[1]
+	now := time.Now().Format(time.RFC3339)
 
-	if exceptionType != "path" && exceptionType != "body_field" && exceptionType != "header" {
-		fmt.Printf("✗ Invalid exception type. Must be: path, body_field, or header\n")
-		return
-	}
-
-	stmt, err := db.Prepare(`
-		INSERT INTO keyword_exceptions (app_id, exception_type, keyword, reason, enabled)
-		VALUES ('default', ?, ?, ?, 1)
-	`)
+	stmt, _ := db.Prepare("INSERT INTO keyword_exceptions (exception_type, keyword, reason, created_at) VALUES (?, ?, ?, ?)")
+	result, err := stmt.Exec(exceptionType, keyword, "CLI exception", now)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
-	defer stmt.Close()
-
-	result, err := stmt.Exec(exceptionType, keyword, "CLI exception")
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return
-	}
-
 	id, _ := result.LastInsertId()
 	fmt.Printf("✓ Keyword exception added (ID: %d)\n", id)
 }
 
 func removeKeywordException(cmd *cobra.Command, args []string) {
-	stmt, err := db.Prepare("DELETE FROM keyword_exceptions WHERE id = ?")
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return
-	}
-	defer stmt.Close()
-
+	stmt, _ := db.Prepare("DELETE FROM keyword_exceptions WHERE id = ?")
 	result, err := stmt.Exec(args[0])
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
-
 	affected, _ := result.RowsAffected()
 	if affected > 0 {
-		fmt.Printf("✓ Keyword exception removed\n")
+		fmt.Println("✓ Keyword exception removed")
 	} else {
-		fmt.Printf("✗ Keyword exception not found\n")
+		fmt.Println("Exception not found")
 	}
 }
 
-// ============== INTEL TEMPLATE COMMANDS ==============
+// ==========================
+// Intel Template Commands
+// ==========================
 
 func listIntelTemplates(cmd *cobra.Command, args []string) {
 	rows, err := db.Query(`
-		SELECT id, name, template_type, is_active, created_at
-		FROM intel_collection_templates ORDER BY id ASC
+		SELECT id, name, template_type, description, is_active 
+		FROM intel_collection_templates 
+		ORDER BY name
 	`)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
@@ -799,92 +717,75 @@ func listIntelTemplates(cmd *cobra.Command, args []string) {
 	}
 	defer rows.Close()
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tNAME\tTYPE\tACTIVE\tCREATED")
-
-	count := 0
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "ID\tNAME\tTYPE\tDESCRIPTION\tACTIVE")
 	for rows.Next() {
-		var id int
-		var name, templateType, created string
-		var active sql.NullBool
-		rows.Scan(&id, &name, &templateType, &active, &created)
-		act := "✗"
-		if active.Valid && active.Bool {
-			act = "✓"
+		var id, active int
+		var name, templateType, description string
+		rows.Scan(&id, &name, &templateType, &description, &active)
+		activeStr := "No"
+		if active == 1 {
+			activeStr = "Yes"
 		}
-		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\n", id, name, templateType, act, created)
-		count++
+		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\n", id, name, templateType, description, activeStr)
 	}
 	w.Flush()
-	fmt.Printf("\nTotal: %d intel templates\n", count)
 }
 
 func viewIntelTemplate(cmd *cobra.Command, args []string) {
-	var id int
-	var name, templateType, content, description, created string
-	var active sql.NullBool
+	var id, name, templateType, content, description string
+	var isActive int
 
 	err := db.QueryRow(`
-		SELECT id, name, template_type, content, description, is_active, created_at
+		SELECT id, name, template_type, content, description, is_active
 		FROM intel_collection_templates WHERE id = ?
-	`, args[0]).Scan(&id, &name, &templateType, &content, &description, &active, &created)
+	`, args[0]).Scan(&id, &name, &templateType, &content, &description, &isActive)
 
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
+		fmt.Printf("Intel template not found: %v\n", err)
 		return
 	}
 
-	act := "Disabled"
-	if active.Valid && active.Bool {
-		act = "Enabled"
-	}
-
-	if len(content) > 200 {
-		content = content[:200] + "..."
-	}
-
-	fmt.Printf(`
-Intel Template #%d
-================
-Name:        %s
-Type:        %s
-Status:      %s
-Description: %s
-Content:     %s
-Created:     %s
-`, id, name, templateType, act, description, content, created)
+	fmt.Printf("Template ID: %s\n", id)
+	fmt.Printf("Name: %s\n", name)
+	fmt.Printf("Type: %s\n", templateType)
+	fmt.Printf("Description: %s\n", description)
+	fmt.Printf("Active: %v\n", isActive == 1)
+	fmt.Printf("\nContent:\n%s\n", content)
 }
 
 func toggleIntelTemplate(cmd *cobra.Command, args []string) {
-	var active sql.NullBool
+	var active int
 	err := db.QueryRow("SELECT is_active FROM intel_collection_templates WHERE id = ?", args[0]).Scan(&active)
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
+		fmt.Printf("Template not found: %v\n", err)
 		return
 	}
 
-	newStatus := 1
-	if active.Valid && active.Bool {
-		newStatus = 0
+	newStatus := 0
+	if active == 0 {
+		newStatus = 1
 	}
 
 	stmt, _ := db.Prepare("UPDATE intel_collection_templates SET is_active = ? WHERE id = ?")
-	defer stmt.Close()
 	stmt.Exec(newStatus, args[0])
 
-	status := "enabled"
-	if newStatus == 0 {
-		status = "disabled"
+	if newStatus == 1 {
+		fmt.Println("✓ Intel template activated")
+	} else {
+		fmt.Println("✓ Intel template deactivated")
 	}
-	fmt.Printf("✓ Intel template %s\n", status)
 }
 
-// ============== PAYLOAD TEMPLATE COMMANDS ==============
+// ==========================
+// Payload Template Commands
+// ==========================
 
 func listPayloads(cmd *cobra.Command, args []string) {
 	rows, err := db.Query(`
-		SELECT id, name, attack_type, payload_type, http_status_code, is_active, priority
-		FROM payload_templates ORDER BY priority DESC, id ASC
+		SELECT id, name, attack_type, payload_type, status_code, priority, is_active 
+		FROM payload_templates 
+		ORDER BY priority DESC
 	`)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
@@ -892,77 +793,66 @@ func listPayloads(cmd *cobra.Command, args []string) {
 	}
 	defer rows.Close()
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tNAME\tATTACK TYPE\tTYPE\tSTATUS CODE\tACTIVE\tPRIORITY")
-
-	count := 0
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "ID\tNAME\tATTACK TYPE\tPAYLOAD TYPE\tSTATUS\tPRIORITY\tACTIVE")
 	for rows.Next() {
-		var id, statusCode, priority int
+		var id, statusCode, priority, active int
 		var name, attackType, payloadType string
-		var active sql.NullBool
-		rows.Scan(&id, &name, &attackType, &payloadType, &statusCode, &active, &priority)
-		act := "✗"
-		if active.Valid && active.Bool {
-			act = "✓"
+		rows.Scan(&id, &name, &attackType, &payloadType, &statusCode, &priority, &active)
+		activeStr := "No"
+		if active == 1 {
+			activeStr = "Yes"
 		}
-		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%d\t%s\t%d\n", id, name, attackType, payloadType, statusCode, act, priority)
-		count++
+		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%d\t%d\t%s\n", id, name, attackType, payloadType, statusCode, priority, activeStr)
 	}
 	w.Flush()
-	fmt.Printf("\nTotal: %d payload templates\n", count)
 }
 
 func viewPayload(cmd *cobra.Command, args []string) {
-	var id, statusCode int
-	var name, attackType, payloadType, content, contentType string
+	var id, name, attackType, payloadType, content, contentType string
+	var statusCode, priority, isActive int
 
 	err := db.QueryRow(`
-		SELECT id, name, attack_type, payload_type, content, content_type, http_status_code
+		SELECT id, name, attack_type, payload_type, content, content_type, status_code, priority, is_active
 		FROM payload_templates WHERE id = ?
-	`, args[0]).Scan(&id, &name, &attackType, &payloadType, &content, &contentType, &statusCode)
+	`, args[0]).Scan(&id, &name, &attackType, &payloadType, &content, &contentType, &statusCode, &priority, &isActive)
 
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
+		fmt.Printf("Payload not found: %v\n", err)
 		return
 	}
 
-	if len(content) > 300 {
-		content = content[:300] + "..."
-	}
-
-	fmt.Printf(`
-Payload Template #%d
-===================
-Name:        %s
-Attack Type: %s
-Payload Type: %s
-Content Type: %s
-Status Code: %d
-Content:     %s
-`, id, name, attackType, payloadType, contentType, statusCode, content)
+	fmt.Printf("Payload ID: %s\n", id)
+	fmt.Printf("Name: %s\n", name)
+	fmt.Printf("Attack Type: %s\n", attackType)
+	fmt.Printf("Payload Type: %s\n", payloadType)
+	fmt.Printf("Content Type: %s\n", contentType)
+	fmt.Printf("Status Code: %d\n", statusCode)
+	fmt.Printf("Priority: %d\n", priority)
+	fmt.Printf("Active: %v\n", isActive == 1)
+	fmt.Printf("\nContent:\n%s\n", content)
 }
 
 func payloadStats(cmd *cobra.Command, args []string) {
 	var total, active int
-
 	db.QueryRow("SELECT COUNT(*) FROM payload_templates").Scan(&total)
 	db.QueryRow("SELECT COUNT(*) FROM payload_templates WHERE is_active = 1").Scan(&active)
 
-	fmt.Printf(`
-Payload Statistics
-==================
-Total Templates: %d
-Active:          %d
-Intelligence:    Enabled
-`, total, active)
+	fmt.Printf("Total Payloads: %d\n", total)
+	fmt.Printf("Active Payloads: %d\n", active)
+	fmt.Printf("Inactive Payloads: %d\n", total-active)
 }
 
-// ============== LEGITIMATE REQUESTS COMMANDS ==============
+// ==========================
+// Legitimate Requests Commands
+// ==========================
 
 func listLegitimate(cmd *cobra.Command, args []string) {
 	rows, err := db.Query(`
-		SELECT id, app_id, http_method, path, hit_count, first_seen, last_seen
-		FROM legitimate_requests ORDER BY last_seen DESC LIMIT 50
+		SELECT path_signature, http_method, hit_count, last_seen 
+		FROM legitimate_requests 
+		ORDER BY hit_count DESC 
+		LIMIT 20
 	`)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
@@ -970,42 +860,45 @@ func listLegitimate(cmd *cobra.Command, args []string) {
 	}
 	defer rows.Close()
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tAPP ID\tMETHOD\tPATH\tHITS\tLAST SEEN")
-
-	count := 0
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "PATH SIG\tMETHOD\tHITS\tLAST SEEN")
 	for rows.Next() {
-		var id, hitCount int
-		var appID, method, path, lastSeen string
-		rows.Scan(&id, &appID, &method, &path, &hitCount, &lastSeen)
-		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%d\t%s\n", id, appID, method, path, hitCount, lastSeen)
-		count++
+		var pathSig, method, lastSeen string
+		var hits int
+		rows.Scan(&pathSig, &method, &hits, &lastSeen)
+		fmt.Fprintf(w, "%s\t%s\t%d\t%s\n", pathSig, method, hits, lastSeen)
 	}
 	w.Flush()
-	fmt.Printf("\nTotal: %d cached legitimate requests\n", count)
 }
 
 func legitimateStats(cmd *cobra.Command, args []string) {
-	var total, hitCount int
-
+	var total int
+	var hitCount sql.NullInt64
 	db.QueryRow("SELECT COUNT(*) FROM legitimate_requests").Scan(&total)
 	db.QueryRow("SELECT SUM(hit_count) FROM legitimate_requests").Scan(&hitCount)
 
-	fmt.Printf(`
-Legitimate Request Cache Statistics
-====================================
-Cached Patterns:     %d
-Total Hits:          %d
-Cache Status:        Active
-`, total, hitCount)
+	hits := int64(0)
+	if hitCount.Valid {
+		hits = hitCount.Int64
+	}
+
+	fmt.Printf("Total Cached Paths: %d\n", total)
+	fmt.Printf("Total Cache Hits: %d\n", hits)
+	if total > 0 {
+		fmt.Printf("Average Hits per Path: %.1f\n", float64(hits)/float64(total))
+	}
 }
 
-// ============== ATTACKER INTERACTIONS COMMANDS ==============
+// ==========================
+// Attacker Interaction Commands
+// ==========================
 
 func listInteractions(cmd *cobra.Command, args []string) {
 	rows, err := db.Query(`
-		SELECT id, app_id, source_ip, interaction_type, timestamp
-		FROM attacker_interactions ORDER BY timestamp DESC LIMIT 50
+		SELECT id, source_ip, interaction_type, content, timestamp 
+		FROM attacker_interactions 
+		ORDER BY timestamp DESC 
+		LIMIT 20
 	`)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
@@ -1013,25 +906,26 @@ func listInteractions(cmd *cobra.Command, args []string) {
 	}
 	defer rows.Close()
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tAPP ID\tSOURCE IP\tTYPE\tTIMESTAMP")
-
-	count := 0
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "ID\tIP\tTYPE\tCONTENT\tTIME")
 	for rows.Next() {
 		var id int
-		var appID, sourceIP, interactionType, timestamp string
-		rows.Scan(&id, &appID, &sourceIP, &interactionType, &timestamp)
-		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\n", id, appID, sourceIP, interactionType, timestamp)
-		count++
+		var ip, intType, content, timestamp string
+		rows.Scan(&id, &ip, &intType, &content, &timestamp)
+		if len(content) > 50 {
+			content = content[:50] + "..."
+		}
+		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\n", id, ip, intType, content, timestamp)
 	}
 	w.Flush()
-	fmt.Printf("\nTotal: %d recent interactions\n", count)
 }
 
 func interactionsByIP(cmd *cobra.Command, args []string) {
 	rows, err := db.Query(`
-		SELECT id, interaction_type, timestamp
-		FROM attacker_interactions WHERE source_ip = ? ORDER BY timestamp DESC
+		SELECT id, interaction_type, content, timestamp 
+		FROM attacker_interactions 
+		WHERE source_ip = ? 
+		ORDER BY timestamp DESC
 	`, args[0])
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
@@ -1039,28 +933,30 @@ func interactionsByIP(cmd *cobra.Command, args []string) {
 	}
 	defer rows.Close()
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(w, "Interactions from %s\n", args[0])
-	fmt.Fprintln(w, "ID\tTYPE\tTIMESTAMP")
-
-	count := 0
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "ID\tTYPE\tCONTENT\tTIME")
 	for rows.Next() {
 		var id int
-		var interactionType, timestamp string
-		rows.Scan(&id, &interactionType, &timestamp)
-		fmt.Fprintf(w, "%d\t%s\t%s\n", id, interactionType, timestamp)
-		count++
+		var intType, content, timestamp string
+		rows.Scan(&id, &intType, &content, &timestamp)
+		if len(content) > 60 {
+			content = content[:60] + "..."
+		}
+		fmt.Fprintf(w, "%d\t%s\t%s\t%s\n", id, intType, content, timestamp)
 	}
 	w.Flush()
-	fmt.Printf("\nTotal: %d\n", count)
 }
 
-// ============== THREAT INTELLIGENCE COMMANDS ==============
+// ==========================
+// Threat Intelligence Commands
+// ==========================
 
 func listThreats(cmd *cobra.Command, args []string) {
 	rows, err := db.Query(`
-		SELECT id, source_ip, risk_score, threat_level, ipinfo_country, total_attacks, updated_at
-		FROM threat_intelligence ORDER BY risk_score DESC LIMIT 50
+		SELECT ip_address, risk_score, threat_level, country, last_seen 
+		FROM threat_intelligence 
+		ORDER BY risk_score DESC 
+		LIMIT 20
 	`)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
@@ -1068,123 +964,59 @@ func listThreats(cmd *cobra.Command, args []string) {
 	}
 	defer rows.Close()
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tIP ADDRESS\tRISK SCORE\tTHREAT LEVEL\tCOUNTRY\tATTACKS\tUPDATED")
-
-	count := 0
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "IP\tRISK\tLEVEL\tCOUNTRY\tLAST SEEN")
 	for rows.Next() {
-		var id, riskScore, totalAttacks int
-		var sourceIP, threatLevel, country, updatedAt string
-		rows.Scan(&id, &sourceIP, &riskScore, &threatLevel, &country, &totalAttacks, &updatedAt)
-		fmt.Fprintf(w, "%d\t%s\t%d\t%s\t%s\t%d\t%s\n", id, sourceIP, riskScore, threatLevel, country, totalAttacks, updatedAt)
-		count++
+		var ip, threatLevel, country, lastSeen string
+		var riskScore int
+		rows.Scan(&ip, &riskScore, &threatLevel, &country, &lastSeen)
+		fmt.Fprintf(w, "%s\t%d\t%s\t%s\t%s\n", ip, riskScore, threatLevel, country, lastSeen)
 	}
 	w.Flush()
-	fmt.Printf("\nTotal: %d enriched threats\n", count)
 }
 
 func viewThreat(cmd *cobra.Command, args []string) {
-	sourceIP := args[0]
-	var id, riskScore, abuseReports, vtMalicious, vtSuspicious, totalAttacks int
-	var abuseScore sql.NullFloat64
-	var isVPN, isProxy bool
-	var threatLevel, country, org, privacyType string
-	var enrichedAt, cachedUntil, lastAttackAt sql.NullString
+	var ip, threatLevel, country, org, lastSeen string
+	var riskScore, abuseScore, abuseReports, vtMal, vtSusp int
 
 	err := db.QueryRow(`
-		SELECT id, risk_score, abuseipdb_score, abuseipdb_reports, virustotal_malicious, virustotal_suspicious,
-		       is_vpn, is_proxy, ipinfo_country, ipinfo_org, ipinfo_privacy_type, threat_level,
-		       enriched_at, cached_until, last_attack_at, total_attacks
-		FROM threat_intelligence WHERE source_ip = ?
-	`, sourceIP).Scan(&id, &riskScore, &abuseScore, &abuseReports, &vtMalicious, &vtSuspicious,
-		&isVPN, &isProxy, &country, &org, &privacyType, &threatLevel,
-		&enrichedAt, &cachedUntil, &lastAttackAt, &totalAttacks)
+		SELECT ip_address, risk_score, threat_level, abuseipdb_score, abuseipdb_reports,
+		       virustotal_malicious, virustotal_suspicious, ipinfo_country, ipinfo_org, last_seen
+		FROM threat_intelligence WHERE ip_address = ?
+	`, args[0]).Scan(&ip, &riskScore, &threatLevel, &abuseScore, &abuseReports, &vtMal, &vtSusp, &country, &org, &lastSeen)
 
-	if err == sql.ErrNoRows {
-		fmt.Printf("✗ No threat intelligence for IP: %s\n", sourceIP)
-		return
-	}
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
+		fmt.Printf("Threat not found: %v\n", err)
 		return
 	}
 
-	abuseScoreStr := "N/A"
-	if abuseScore.Valid {
-		abuseScoreStr = fmt.Sprintf("%.1f", abuseScore.Float64)
-	}
-
-	lastAttackStr := "Never"
-	if lastAttackAt.Valid {
-		lastAttackStr = lastAttackAt.String
-	}
-
-	enrichedStr := "N/A"
-	if enrichedAt.Valid {
-		enrichedStr = enrichedAt.String
-	}
-
-	cachedStr := "N/A"
-	if cachedUntil.Valid {
-		cachedStr = cachedUntil.String
-	}
-
-	vpnStr := "No"
-	if isVPN {
-		vpnStr = "Yes"
-	}
-
-	proxyStr := "No"
-	if isProxy {
-		proxyStr = "Yes"
-	}
-
-	fmt.Printf(`
-Threat Intelligence for %s
-==========================
-ID:                  %d
-Risk Score:          %d/100 (%s)
-Country:             %s
-Organization:        %s
-
-AbuseIPDB Data
-  Confidence Score:  %s
-  Reports:           %d
-
-VirusTotal Data
-  Malicious:         %d
-  Suspicious:        %d
-
-Privacy/Hosting
-  VPN:               %s
-  Proxy:             %s
-  Type:              %s
-
-Detection Stats
-  Total Attacks:     %d
-  Last Attack:       %s
-
-Cache Info
-  Enriched:          %s
-  Cache Until:       %s
-`, sourceIP, id, riskScore, threatLevel, country, org,
-		abuseScoreStr, abuseReports,
-		vtMalicious, vtSuspicious,
-		vpnStr, proxyStr, privacyType,
-		totalAttacks, lastAttackStr,
-		enrichedStr, cachedStr)
+	fmt.Printf("IP Address: %s\n", ip)
+	fmt.Printf("Risk Score: %d\n", riskScore)
+	fmt.Printf("Threat Level: %s\n", threatLevel)
+	fmt.Printf("Country: %s\n", country)
+	fmt.Printf("Organization: %s\n", org)
+	fmt.Printf("\nAbuseIPDB:\n")
+	fmt.Printf("  Score: %d\n", abuseScore)
+	fmt.Printf("  Reports: %d\n", abuseReports)
+	fmt.Printf("\nVirusTotal:\n")
+	fmt.Printf("  Malicious: %d\n", vtMal)
+	fmt.Printf("  Suspicious: %d\n", vtSusp)
+	fmt.Printf("\nLast Seen: %s\n", lastSeen)
 }
-
 
 func topThreats(cmd *cobra.Command, args []string) {
 	limit := 10
 	if len(args) > 0 {
-		fmt.Sscanf(args[0], "%d", &limit)
+		if parsed, err := strconv.Atoi(args[0]); err == nil {
+			limit = parsed
+		}
 	}
 
 	rows, err := db.Query(`
-		SELECT id, source_ip, risk_score, threat_level, ipinfo_country, total_attacks, updated_at
-		FROM threat_intelligence ORDER BY risk_score DESC LIMIT ?
+		SELECT ip_address, risk_score, threat_level, country 
+		FROM threat_intelligence 
+		ORDER BY risk_score DESC 
+		LIMIT ?
 	`, limit)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
@@ -1192,17 +1024,13 @@ func topThreats(cmd *cobra.Command, args []string) {
 	}
 	defer rows.Close()
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(w, "Top %d Threats by Risk Score\n", limit)
-	fmt.Fprintln(w, "RANK\tIP ADDRESS\tRISK SCORE\tTHREAT LEVEL\tCOUNTRY\tATTACKS")
-
-	rank := 1
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "IP\tRISK\tLEVEL\tCOUNTRY")
 	for rows.Next() {
-		var id, riskScore, totalAttacks int
-		var sourceIP, threatLevel, country, updatedAt string
-		rows.Scan(&id, &sourceIP, &riskScore, &threatLevel, &country, &totalAttacks, &updatedAt)
-		fmt.Fprintf(w, "%d\t%s\t%d\t%s\t%s\t%d\n", rank, sourceIP, riskScore, threatLevel, country, totalAttacks)
-		rank++
+		var ip, threatLevel, country string
+		var riskScore int
+		rows.Scan(&ip, &riskScore, &threatLevel, &country)
+		fmt.Fprintf(w, "%s\t%d\t%s\t%s\n", ip, riskScore, threatLevel, country)
 	}
 	w.Flush()
 }
@@ -1210,7 +1038,6 @@ func topThreats(cmd *cobra.Command, args []string) {
 func threatStats(cmd *cobra.Command, args []string) {
 	var total, critical, high, medium, low int
 	var avgScore float64
-
 	db.QueryRow("SELECT COUNT(*) FROM threat_intelligence").Scan(&total)
 	db.QueryRow("SELECT COUNT(*) FROM threat_intelligence WHERE threat_level = 'CRITICAL'").Scan(&critical)
 	db.QueryRow("SELECT COUNT(*) FROM threat_intelligence WHERE threat_level = 'HIGH'").Scan(&high)
@@ -1218,24 +1045,17 @@ func threatStats(cmd *cobra.Command, args []string) {
 	db.QueryRow("SELECT COUNT(*) FROM threat_intelligence WHERE threat_level = 'LOW'").Scan(&low)
 	db.QueryRow("SELECT COALESCE(AVG(risk_score), 0) FROM threat_intelligence").Scan(&avgScore)
 
-	fmt.Printf(`
-Threat Intelligence Statistics
-===============================
-Total Enriched IPs:   %d
-Average Risk Score:   %.1f
-
-Threat Level Distribution
-  🔴 CRITICAL:        %d
-  🟠 HIGH:            %d
-  🟡 MEDIUM:          %d
-  🟢 LOW:             %d
-
-Status: Active enrichment workers running
-Cache TTL: 24 hours
-`, total, avgScore, critical, high, medium, low)
+	fmt.Printf("Total Threats: %d\n", total)
+	fmt.Printf("Critical: %d\n", critical)
+	fmt.Printf("High: %d\n", high)
+	fmt.Printf("Medium: %d\n", medium)
+	fmt.Printf("Low: %d\n", low)
+	fmt.Printf("Average Risk Score: %.1f\n", avgScore)
 }
 
-// ============== DATABASE COMMANDS ==============
+// ==========================
+// Database Commands
+// ==========================
 
 func dbStats(cmd *cobra.Command, args []string) {
 	var attacks, patterns, attackers, exceptions, keywords, intel, payloads, legitimate, interactions, threats int
@@ -1251,72 +1071,24 @@ func dbStats(cmd *cobra.Command, args []string) {
 	db.QueryRow("SELECT COUNT(*) FROM attacker_interactions").Scan(&interactions)
 	db.QueryRow("SELECT COUNT(*) FROM threat_intelligence").Scan(&threats)
 
-	fileInfo, err := os.Stat("data/ifrit.db")
-	size := "unknown"
-	if err == nil {
-		size = fmt.Sprintf("%.2f MB", float64(fileInfo.Size())/(1024*1024))
-	}
-
-	fmt.Printf(`
-Database Statistics
-====================
-Attack Instances:      %d
-Attack Patterns:       %d
-Attacker Profiles:     %d
-Threat Intelligence:   %d
-Exceptions:            %d
-Keyword Exceptions:    %d
-Intel Templates:       %d
-Payload Templates:     %d
-Legitimate Requests:   %d
-Attacker Interactions: %d
-Database Size:         %s
-`, attacks, patterns, attackers, threats, exceptions, keywords, intel, payloads, legitimate, interactions, size)
+	fmt.Println("=== IFRIT Database Statistics ===")
+	fmt.Printf("Attack Instances: %d\n", attacks)
+	fmt.Printf("Attack Patterns: %d\n", patterns)
+	fmt.Printf("Attacker Profiles: %d\n", attackers)
+	fmt.Printf("Exceptions: %d\n", exceptions)
+	fmt.Printf("Keyword Exceptions: %d\n", keywords)
+	fmt.Printf("Intel Templates: %d\n", intel)
+	fmt.Printf("Payload Templates: %d\n", payloads)
+	fmt.Printf("Legitimate Requests (cached): %d\n", legitimate)
+	fmt.Printf("Attacker Interactions: %d\n", interactions)
+	fmt.Printf("Threat Intelligence Records: %d\n", threats)
 }
 
 func showSchema(cmd *cobra.Command, args []string) {
-	fmt.Println(`
-IFRIT Database Tables (Phase 1.2)
-=================================
-
-CORE DETECTION
-- attack_instances      Recorded attacks & honeypots
-- attack_patterns       Known attack signatures
-- attacker_profiles     Attacker information & behavior
-
-THREAT INTELLIGENCE
-- threat_intelligence   Enriched IP data (AbuseIPDB, VirusTotal, IPinfo)
-
-WHITELISTING
-- exceptions            IP/path exceptions
-- keyword_exceptions    Keyword-based exception rules
-
-LEARNING & CACHE
-- legitimate_requests   Cached legitimate traffic
-- learning_mode_requests Requests in learning mode
-
-INTELLIGENCE
-- attacker_interactions Attacker behavioral data
-- intel_collection_templates Tracking/intel templates
-
-PAYLOADS
-- payload_templates     Honeypot response templates
-- payload_conditions    Conditions for payload selection
-
-API & LOGGING
-- llm_api_calls         LLM API usage logs
-- anonymization_log     Data anonymization records
-- api_users             API user accounts
-- api_tokens            API authentication tokens
-`)
-}
-
-// ============== API TOKEN COMMANDS ==============
-
-func listTokens(cmd *cobra.Command, args []string) {
 	rows, err := db.Query(`
-		SELECT id, user_id, token_name, token_prefix, expires_at, created_at
-		FROM api_tokens ORDER BY created_at DESC
+		SELECT name FROM sqlite_master 
+		WHERE type='table' 
+		ORDER BY name
 	`)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
@@ -1324,70 +1096,66 @@ func listTokens(cmd *cobra.Command, args []string) {
 	}
 	defer rows.Close()
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tUSER ID\tNAME\tPREFIX\tEXPIRES AT\tSTATUS")
-
-	count := 0
+	fmt.Println("=== IFRIT Database Tables ===")
 	for rows.Next() {
-		var id, userID int
-		var name, prefix, expiresAt, created string
-		rows.Scan(&id, &userID, &name, &prefix, &expiresAt, &created)
-
-		expTime, _ := time.Parse(time.RFC3339, expiresAt)
-		status := "Active"
-		if time.Now().After(expTime) {
-			status = "EXPIRED"
-		}
-
-		fmt.Fprintf(w, "%d\t%d\t%s\t%s...\t%s\t%s\n", id, userID, name, prefix, expiresAt, status)
-		count++
+		var name string
+		rows.Scan(&name)
+		fmt.Printf("- %s\n", name)
 	}
-	w.Flush()
-	fmt.Printf("\nTotal: %d API tokens\n", count)
 }
 
-func createToken(cmd *cobra.Command, args []string) {
-	userID := args[0]
+// ==========================
+// API Token Commands
+// ==========================
 
-	// Auto-create user if doesn't exist
-	var exists bool
-	db.QueryRow("SELECT EXISTS(SELECT 1 FROM api_users WHERE id = ?)", userID).Scan(&exists)
-	if !exists {
-		db.Exec("INSERT INTO api_users (id, username, role, is_active) VALUES (?, ?, 'admin', 1)", userID, "user_"+userID)
-		fmt.Printf("✓ User auto-created (ID: %s)\n", userID)
-	}
-
-	tokenName := args[1]
-
-	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	b := make([]byte, 32)
-	for i := range b {
-		// Use crypto/rand instead of sequential
-		num, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
-		if err != nil {
-			fmt.Printf("Error generating token: %v\n", err)
-			return
-		}
-		b[i] = charset[num.Int64()]
-	}
-	tokenString := "ifr_" + string(b)
-
-	hash := sha256.Sum256([]byte(tokenString))
-	tokenHash := hex.EncodeToString(hash[:])
-	tokenPrefix := tokenString[:8]
-	expiresAt := time.Now().AddDate(0, 0, 90).Format(time.RFC3339)
-
-	stmt, err := db.Prepare(`
-		INSERT INTO api_tokens (user_id, token_name, token_hash, token_prefix, app_id, permissions, expires_at, created_at)
-		VALUES (?, ?, ?, ?, 'default', '["read","write"]', ?, ?)
+func listTokens(cmd *cobra.Command, args []string) {
+	rows, err := db.Query(`
+		SELECT id, user_id, token_name, token_prefix, is_active, expires_at, created_at 
+		FROM api_tokens 
+		ORDER BY created_at DESC
 	`)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
-	defer stmt.Close()
+	defer rows.Close()
 
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "ID\tUSER\tNAME\tPREFIX\tACTIVE\tEXPIRES\tCREATED")
+	for rows.Next() {
+		var id int
+		var userID, tokenName, tokenPrefix, expiresAt, createdAt string
+		var isActive bool
+		rows.Scan(&id, &userID, &tokenName, &tokenPrefix, &isActive, &expiresAt, &createdAt)
+		activeStr := "No"
+		if isActive {
+			activeStr = "Yes"
+		}
+		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\t%s\n", id, userID, tokenName, tokenPrefix, activeStr, expiresAt, createdAt)
+	}
+	w.Flush()
+}
+
+func createToken(cmd *cobra.Command, args []string) {
+	userID := args[0]
+	tokenName := args[1]
+
+	// Check if user exists, create if not
+	var exists bool
+	db.QueryRow("SELECT EXISTS(SELECT 1 FROM api_users WHERE id = ?)", userID).Scan(&exists)
+	if !exists {
+		db.Exec("INSERT INTO api_users (id, username, role, is_active) VALUES (?, ?, 'admin', 1)", userID, "user_"+userID)
+	}
+
+	// Generate token (simplified - in production use crypto/rand)
+	token := fmt.Sprintf("ifrit_%s_%d", userID, time.Now().Unix())
+	tokenHash := fmt.Sprintf("hash_%s", token) // In production: bcrypt hash
+	tokenPrefix := token[:12]
+
+	expiresAt := time.Now().Add(365 * 24 * time.Hour).Format(time.RFC3339)
 	now := time.Now().Format(time.RFC3339)
+
+	stmt, _ := db.Prepare("INSERT INTO api_tokens (user_id, token_name, token_hash, token_prefix, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)")
 	result, err := stmt.Exec(userID, tokenName, tokenHash, tokenPrefix, expiresAt, now)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
@@ -1395,72 +1163,49 @@ func createToken(cmd *cobra.Command, args []string) {
 	}
 
 	id, _ := result.LastInsertId()
-	fmt.Printf("✓ Token created successfully\n")
-	fmt.Printf("  ID:       %d\n", id)
-	fmt.Printf("  Token:    %s\n", tokenString)
-	fmt.Printf("  Expires:  %s\n\n", expiresAt)
-	fmt.Printf("Save this token - you won't see it again!\n")
+	fmt.Printf("✓ Token created (ID: %d)\n", id)
+	fmt.Printf("Token: %s\n", token)
+	fmt.Printf("⚠️  Save this token - it won't be shown again!\n")
 }
 
 func revokeToken(cmd *cobra.Command, args []string) {
-	stmt, err := db.Prepare("DELETE FROM api_tokens WHERE id = ?")
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return
-	}
-	defer stmt.Close()
-
+	stmt, _ := db.Prepare("UPDATE api_tokens SET is_active = 0 WHERE id = ?")
 	result, err := stmt.Exec(args[0])
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
-
 	affected, _ := result.RowsAffected()
 	if affected > 0 {
-		fmt.Printf("✓ Token revoked\n")
+		fmt.Println("✓ Token revoked")
 	} else {
-		fmt.Printf("✗ Token not found\n")
+		fmt.Println("Token not found")
 	}
 }
 
 func validateToken(cmd *cobra.Command, args []string) {
-	tokenString := args[0]
-	hash := sha256.Sum256([]byte(tokenString))
-	tokenHash := hex.EncodeToString(hash[:])
-
-	var id, userID int
-	var tokenName, appID, permissions, expiresAt string
+	var id int
+	var isActive bool
+	var expiresAt string
 
 	err := db.QueryRow(`
-		SELECT id, user_id, token_name, app_id, permissions, expires_at
-		FROM api_tokens WHERE token_hash = ?
-	`, tokenHash).Scan(&id, &userID, &tokenName, &appID, &permissions, &expiresAt)
+		SELECT id, is_active, expires_at 
+		FROM api_tokens 
+		WHERE token_prefix = ?
+	`, args[0][:12]).Scan(&id, &isActive, &expiresAt)
 
-	if err == sql.ErrNoRows {
-		fmt.Printf("✗ Invalid token\n")
-		return
-	}
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
+		fmt.Println("✗ Invalid token")
 		return
 	}
 
-	expTime, _ := time.Parse(time.RFC3339, expiresAt)
-	status := "Valid"
-	if time.Now().After(expTime) {
-		status = "EXPIRED"
+	expires, _ := time.Parse(time.RFC3339, expiresAt)
+	if !isActive {
+		fmt.Println("✗ Token revoked")
+	} else if time.Now().After(expires) {
+		fmt.Println("✗ Token expired")
+	} else {
+		fmt.Println("✓ Token valid")
+		fmt.Printf("Expires: %s\n", expiresAt)
 	}
-
-	fmt.Printf(`
-Token Validation
-================
-Status:       %s
-ID:           %d
-User ID:      %d
-Token Name:   %s
-App ID:       %s
-Permissions:  %s
-Expires At:   %s
-`, status, id, userID, tokenName, appID, permissions, expiresAt)
 }

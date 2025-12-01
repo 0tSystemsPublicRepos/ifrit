@@ -11,17 +11,26 @@ import (
 	"github.com/0tSystemsPublicRepos/ifrit/internal/logging"
 )
 
+
 type ExecutionModeHandler struct {
 	config *config.ExecutionModeConfig
-	db     *database.SQLiteDB
+	db     database.DatabaseProvider
 }
 
-func NewExecutionModeHandler(cfg *config.ExecutionModeConfig, db *database.SQLiteDB) *ExecutionModeHandler {
+
+
+func NewExecutionModeHandler(cfg *config.ExecutionModeConfig, db database.DatabaseProvider) *ExecutionModeHandler {
 	return &ExecutionModeHandler{
 		config: cfg,
 		db:     db,
 	}
 }
+
+// SetDatabase sets the database provider for the execution mode handler
+func (e *ExecutionModeHandler) SetDatabase(db database.DatabaseProvider) {
+	e.db = db
+}
+
 
 // HandleOnboardingRequest handles request in onboarding mode
 // Adds the request path to exceptions whitelist
