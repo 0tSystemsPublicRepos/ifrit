@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"net/url"
 
 	"github.com/0tSystemsPublicRepos/ifrit/internal/anonymization"
 	"github.com/0tSystemsPublicRepos/ifrit/internal/database"
@@ -131,6 +132,8 @@ func (de *DetectionEngine) CheckExceptions(r *http.Request, clientIP, appID stri
 	return false
 }
 
+
+
 // CheckLocalRules checks request against local regex rules (with app_id support)
 func (de *DetectionEngine) CheckLocalRules(r *http.Request, appID string, skipBodyCheckOnWhitelist bool) *DetectionResult {
 	logging.Debug("[STAGE1] app_id=%s | CheckLocalRules called for: %s %s", appID, r.Method, r.URL.Path)
@@ -147,7 +150,29 @@ func (de *DetectionEngine) CheckLocalRules(r *http.Request, appID string, skipBo
 			continue
 		}
 
-		fullRequest := r.URL.Path + "?" + r.URL.RawQuery
+		// Build complete request string for pattern matching
+		fullRequest := r.URL.Path
+		if r.URL.RawQuery != "" {
+			// Decode the query string so patterns can match URL-encoded attacks
+			decodedQuery, err := url.QueryUnescape(r.URL.RawQuery)
+			if err != nil {
+				decodedQuery = r.URL.RawQuery // fallback to raw if decode fails
+			}
+			fullRequest += "?" + decodedQuery
+		}
+
+		// Add headers (space-separated for pattern matching)
+		for key, values := range r.Header {
+			fullRequest += " " + key + ":" + strings.Join(values, ",")
+		}
+
+		// Add body if present
+		if r.Body != nil {
+			bodyBytes, _ := io.ReadAll(r.Body)
+			r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes)) // Restore body
+			fullRequest += " " + string(bodyBytes)
+		}
+
 		if rule.Pattern.MatchString(fullRequest) {
 			// Check keyword exceptions before returning attack
 			if de.shouldSkipKeywordCheck(r, appID) && skipBodyCheckOnWhitelist {
@@ -161,6 +186,7 @@ func (de *DetectionEngine) CheckLocalRules(r *http.Request, appID string, skipBo
 			}
 
 			signature := de.GenerateSignature(r)
+			logging.Debug("[STAGE1] Pattern '%s' matched in full request", rule.Name)
 			return &DetectionResult{
 				IsAttack:       true,
 				AttackType:     rule.Name,
@@ -175,9 +201,11 @@ func (de *DetectionEngine) CheckLocalRules(r *http.Request, appID string, skipBo
 	return nil
 }
 
-// CheckDatabasePatterns checks request against database patterns (with app_id support)
+
+// CheckDatabasePatterns checks request against database patterns (ENHANCED)
 func (de *DetectionEngine) CheckDatabasePatterns(r *http.Request, appID string, skipBodyCheckOnWhitelist bool) *DetectionResult {
 	logging.Debug("[STAGE2] app_id=%s | CheckDatabasePatterns called for: %s %s", appID, r.Method, r.URL.Path)
+	
 	patterns, err := de.db.GetAllPatterns(appID)
 	if err != nil {
 		logging.Error("[STAGE2] app_id=%s | Error fetching patterns: %v", appID, err)
@@ -185,14 +213,35 @@ func (de *DetectionEngine) CheckDatabasePatterns(r *http.Request, appID string, 
 	}
 	logging.Debug("[STAGE2] app_id=%s | Fetched %d patterns from database", appID, len(patterns))
 
-
 	for _, pattern := range patterns {
+		// Extract pattern fields
 		pathPattern := pattern["path_pattern"].(string)
 		method := pattern["http_method"].(string)
 		attackType := pattern["attack_type"].(string)
+		
+		// Get new fields (with nil checks)
+		patternType := "exact" // default
+		if pt, ok := pattern["pattern_type"].(string); ok && pt != "" {
+			patternType = pt
+		}
+		
+		headerPattern := ""
+		if hp, ok := pattern["header_pattern"].(string); ok {
+			headerPattern = hp
+		}
+		
+		bodyPattern := ""
+		if bp, ok := pattern["body_pattern"].(string); ok {
+			bodyPattern = bp
+		}
+		
+		queryPattern := ""
+		if qp, ok := pattern["query_pattern"].(string); ok {
+			queryPattern = qp
+		}
 
 		// Check method first
-		if method != r.Method {
+		if method != "" && method != r.Method {
 			continue
 		}
 
@@ -207,26 +256,118 @@ func (de *DetectionEngine) CheckDatabasePatterns(r *http.Request, appID string, 
 			logging.Debug("[KEYWORD_CHECK] app_id=%s | Path whitelisted but checking pattern (skipBodyCheck=false)", appID)
 		}
 
-		// Check path
-// 		logging.Debug("[STAGE2] app_id=%s | Comparing: pathPattern='%s' == r.URL.Path='%s' | method='%s' == r.Method='%s'", appID, pathPattern, r.URL.Path, method, r.Method)
-		if strings.HasPrefix(r.URL.Path, pathPattern) {
-			return &DetectionResult{
-				IsAttack:        true,
-				AttackType:      attackType,
-				Classification:  pattern["attack_classification"].(string),
-				Confidence:      pattern["confidence"].(float64),
-				Signature:       de.GenerateSignature(r),
-				DetectionStage:  2,
-				PatternID:       pattern["id"].(int64),
-				PayloadTemplate: pattern["payload_template"].(string),
-				ResponseCode:    getIntFromInterface(pattern["response_code"]), 
+		// Match based on pattern type
+		pathMatched := false
+		
+		switch patternType {
+		case "exact":
+			pathMatched = (pathPattern == r.URL.Path)
+			logging.Debug("[STAGE2] app_id=%s | EXACT match: '%s' == '%s' -> %v", appID, pathPattern, r.URL.Path, pathMatched)
+			
+		case "prefix":
+			// Must match: /api/admin == /api/admin OR /api/admin/ is prefix of /api/admin/users
+			pathMatched = (pathPattern == r.URL.Path) || 
+			             strings.HasPrefix(r.URL.Path, pathPattern+"/")
+			logging.Debug("[STAGE2] app_id=%s | PREFIX match: '%s' prefix of '%s' -> %v", appID, pathPattern, r.URL.Path, pathMatched)
+			
+		case "regex":
+			if re, err := regexp.Compile(pathPattern); err == nil {
+				pathMatched = re.MatchString(r.URL.Path)
+				logging.Debug("[STAGE2] app_id=%s | REGEX match: '%s' regex '%s' -> %v", appID, pathPattern, r.URL.Path, pathMatched)
+			} else {
+				logging.Error("[STAGE2] app_id=%s | Invalid regex pattern: %s", appID, pathPattern)
 			}
+			
+		case "contains":
+			pathMatched = strings.Contains(r.URL.Path, pathPattern)
+			logging.Debug("[STAGE2] app_id=%s | CONTAINS match: '%s' contains '%s' -> %v", appID, r.URL.Path, pathPattern, pathMatched)
+		}
+
+		if !pathMatched {
+			continue
+		}
+
+		// Check query pattern if specified
+		if queryPattern != "" && r.URL.RawQuery != "" {
+			queryMatched := false
+			if re, err := regexp.Compile(queryPattern); err == nil {
+				queryMatched = re.MatchString(r.URL.RawQuery)
+			} else {
+				queryMatched = strings.Contains(r.URL.RawQuery, queryPattern)
+			}
+			if !queryMatched {
+				logging.Debug("[STAGE2] app_id=%s | Query pattern not matched, skipping", appID)
+				continue
+			}
+			logging.Debug("[STAGE2] app_id=%s | Query pattern matched", appID)
+		}
+
+		// Check header pattern if specified
+		if headerPattern != "" {
+			headerMatched := false
+			headerRegex, err := regexp.Compile(headerPattern)
+			
+			for key, values := range r.Header {
+				headerStr := key + ":" + strings.Join(values, ",")
+				if err == nil {
+					if headerRegex.MatchString(headerStr) {
+						headerMatched = true
+						logging.Debug("[STAGE2] app_id=%s | Header pattern matched: %s", appID, headerStr)
+						break
+					}
+				} else {
+					if strings.Contains(headerStr, headerPattern) {
+						headerMatched = true
+						logging.Debug("[STAGE2] app_id=%s | Header contains pattern: %s", appID, headerStr)
+						break
+					}
+				}
+			}
+			
+			if !headerMatched {
+				logging.Debug("[STAGE2] app_id=%s | Header pattern not matched, skipping", appID)
+				continue
+			}
+		}
+
+		// Check body pattern if specified
+		if bodyPattern != "" && r.Body != nil {
+			bodyBytes, _ := io.ReadAll(r.Body)
+			r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes)) // Restore body
+			bodyStr := string(bodyBytes)
+			
+			bodyMatched := false
+			if re, err := regexp.Compile(bodyPattern); err == nil {
+				bodyMatched = re.MatchString(bodyStr)
+			} else {
+				bodyMatched = strings.Contains(bodyStr, bodyPattern)
+			}
+			
+			if !bodyMatched {
+				logging.Debug("[STAGE2] app_id=%s | Body pattern not matched, skipping", appID)
+				continue
+			}
+			logging.Debug("[STAGE2] app_id=%s | Body pattern matched", appID)
+		}
+
+		// All checks passed - this is an attack!
+		logging.Info("[STAGE2] app_id=%s | Attack detected: %s (pattern_type: %s)", appID, attackType, patternType)
+		
+		return &DetectionResult{
+			IsAttack:        true,
+			AttackType:      attackType,
+			Classification:  pattern["attack_classification"].(string),
+			Confidence:      pattern["confidence"].(float64),
+			Signature:       de.GenerateSignature(r),
+			DetectionStage:  2,
+			PatternID:       pattern["id"].(int64),
+			PayloadTemplate: pattern["payload_template"].(string),
+			ResponseCode:    getIntFromInterface(pattern["response_code"]),
 		}
 	}
 
 	return nil
 }
-
 
 // getIntFromInterface safely converts interface{} to int (handles both int and int64)
 func getIntFromInterface(val interface{}) int {
@@ -323,21 +464,26 @@ func (de *DetectionEngine) CheckLLMAnalysis(r *http.Request, appID string, skipB
         }
 
         // Store the result in database for future learning (with app_id)
-        payload, _ := de.llmManager.GeneratePayload(result.AttackType)
-        payloadJSON, _ := json.Marshal(payload)
-        de.db.StoreAttackPattern(
-                appID,
-                de.GenerateSignature(r),
-                result.AttackType,
-                result.Classification,
-                r.Method,
-                r.URL.Path,
-                string(payloadJSON),
-                200,
-                "llm",
-                result.Confidence,
-        )
+	payload, _ := de.llmManager.GeneratePayload(result.AttackType)
+	payloadJSON, _ := json.Marshal(payload)
+	de.db.StoreAttackPatternEnhanced(
+		appID,
+		de.GenerateSignature(r),
+		result.AttackType,
+		result.Classification,
+		r.Method,
+		r.URL.Path,
+		string(payloadJSON),
+		200,
+		"llm",
+		result.Confidence,
+		"prefix",  // default pattern type for LLM-detected patterns
+		"",        // header_pattern (could be extracted from LLM analysis in future)
+		"",        // body_pattern
+		"",        // query_pattern
+	)
 
+ 
         return &DetectionResult{
                 IsAttack:        true,
                 AttackType:      result.AttackType,

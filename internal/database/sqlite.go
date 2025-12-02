@@ -123,6 +123,43 @@ func (sp *SQLiteProvider) StoreAttackPattern(appID, signature, attackType, class
 	return err
 }
 
+// StoreAttackPatternEnhanced stores attack pattern with enhanced pattern matching fields
+func (s *SQLiteProvider) StoreAttackPatternEnhanced(
+	appID, signature, attackType, classification, method, pathPattern,
+	payloadTemplate string, responseCode int, createdBy string,
+	confidence float64, patternType, headerPattern, bodyPattern,
+	queryPattern string,
+) error {
+	query := `
+		INSERT INTO attack_patterns (
+			app_id, attack_signature, attack_type, attack_classification,
+			http_method, path_pattern, payload_template, response_code,
+			created_by, claude_confidence, pattern_type, header_pattern,
+			body_pattern, query_pattern, times_seen, first_seen, last_seen
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, datetime('now'), datetime('now'))
+		ON CONFLICT(app_id, attack_signature) DO UPDATE SET
+			times_seen = times_seen + 1,
+			last_seen = datetime('now'),
+			pattern_type = excluded.pattern_type,
+			header_pattern = excluded.header_pattern,
+			body_pattern = excluded.body_pattern,
+			query_pattern = excluded.query_pattern
+	`
+
+	_, err := s.db.Exec(query,
+		appID, signature, attackType, classification, method, pathPattern,
+		payloadTemplate, responseCode, createdBy, confidence, patternType,
+		headerPattern, bodyPattern, queryPattern,
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to store enhanced attack pattern: %w", err)
+	}
+
+	return nil
+}
+
+
 func (sp *SQLiteProvider) GetAllPatterns(appID string) ([]map[string]interface{}, error) {
 	query := `
 		SELECT id, attack_signature, attack_type, attack_classification, http_method, 
@@ -581,7 +618,7 @@ func (sp *SQLiteProvider) StoreAttackerInteraction(appID string, patternID int64
 // GetIntelCollectionTemplates returns all intelligence collection templates
 func (sp *SQLiteProvider) GetIntelCollectionTemplates() ([]map[string]interface{}, error) {
 	query := `
-		SELECT id, name, description, payload_template, conditions, enabled, created_at
+		SELECT id, name, description, payload_template, conditions, is_active, created_at
 		FROM intel_collection_templates
 		ORDER BY id
 	`
@@ -596,9 +633,9 @@ func (sp *SQLiteProvider) GetIntelCollectionTemplates() ([]map[string]interface{
 	for rows.Next() {
 		var id int64
 		var name, description, payloadTemplate, conditions, createdAt string
-		var enabled bool
+		var isActive bool
 
-		err := rows.Scan(&id, &name, &description, &payloadTemplate, &conditions, &enabled, &createdAt)
+		err := rows.Scan(&id, &name, &description, &payloadTemplate, &conditions, &isActive, &createdAt)
 		if err != nil {
 			continue
 		}
@@ -609,7 +646,7 @@ func (sp *SQLiteProvider) GetIntelCollectionTemplates() ([]map[string]interface{
 			"description":      description,
 			"payload_template": payloadTemplate,
 			"conditions":       conditions,
-			"enabled":          enabled,
+			"is_active":         isActive,
 			"created_at":       createdAt,
 		})
 	}

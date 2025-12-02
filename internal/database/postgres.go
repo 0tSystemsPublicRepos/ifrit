@@ -108,27 +108,26 @@ func (pp *PostgresProvider) createAllTables() error {
 		{
 			name: "attack_patterns",
 			schema: `CREATE TABLE IF NOT EXISTS attack_patterns (
-				id SERIAL PRIMARY KEY,
-				app_id VARCHAR(255) DEFAULT 'default',
-				attack_signature TEXT,
-				attack_type VARCHAR(255) NOT NULL,
-				attack_classification VARCHAR(255),
-				http_method VARCHAR(10),
-				path_pattern TEXT,
-				payload_template TEXT,
-				response_code INTEGER,
-				times_seen INTEGER DEFAULT 0,
-				first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-				last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-				created_by VARCHAR(255),
-				claude_confidence REAL,
-				body_signature TEXT,
-				cached_payload TEXT,
-				cached_payload_with_intel TEXT,
-				llm_generated_at TIMESTAMP,
-				llm_cache_hits INTEGER DEFAULT 0,
-				
-				UNIQUE(app_id, attack_signature)
+			    id BIGSERIAL PRIMARY KEY,
+			    app_id TEXT NOT NULL,
+			    attack_signature TEXT NOT NULL,
+			    attack_type TEXT NOT NULL,
+			    attack_classification TEXT,
+			    http_method TEXT,
+			    path_pattern TEXT,
+			    payload_template TEXT,
+			    response_code INTEGER DEFAULT 403,
+			    times_seen INTEGER DEFAULT 0,
+			    first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			    last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			    created_by TEXT,
+			    claude_confidence REAL DEFAULT 0.0,
+			    header_pattern TEXT,
+			    body_pattern TEXT,
+			    query_pattern TEXT,
+			    pattern_type TEXT DEFAULT 'exact',
+			    full_request_pattern TEXT,
+			    UNIQUE(app_id, attack_signature)
 			)`,
 		},
 		{
@@ -342,8 +341,9 @@ func (pp *PostgresProvider) createAllTables() error {
 				is_active BOOLEAN DEFAULT TRUE,
 				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 				updated_at TIMESTAMP,
-payload_template TEXT,
-				created_by VARCHAR(255)
+				payload_template TEXT,
+				created_by VARCHAR(255),
+				conditions TEXT
 			)`,
 		},
 		{
@@ -613,6 +613,43 @@ func (pp *PostgresProvider) StoreAttackPattern(appID, signature, attackType, cla
 	_, err := pp.db.Exec(query, appID, signature, attackType, classification, method, path, payloadTemplate, responseCode, createdBy, confidence)
 	return err
 }
+
+// StoreAttackPatternEnhanced stores attack pattern with enhanced pattern matching fields
+func (p *PostgresProvider) StoreAttackPatternEnhanced(
+	appID, signature, attackType, classification, method, pathPattern,
+	payloadTemplate string, responseCode int, createdBy string,
+	confidence float64, patternType, headerPattern, bodyPattern,
+	queryPattern string,
+) error {
+	query := `
+		INSERT INTO attack_patterns (
+			app_id, attack_signature, attack_type, attack_classification,
+			http_method, path_pattern, payload_template, response_code,
+			created_by, claude_confidence, pattern_type, header_pattern,
+			body_pattern, query_pattern, times_seen, first_seen, last_seen
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		ON CONFLICT(app_id, attack_signature) DO UPDATE SET
+			times_seen = attack_patterns.times_seen + 1,
+			last_seen = CURRENT_TIMESTAMP,
+			pattern_type = EXCLUDED.pattern_type,
+			header_pattern = EXCLUDED.header_pattern,
+			body_pattern = EXCLUDED.body_pattern,
+			query_pattern = EXCLUDED.query_pattern
+	`
+
+	_, err := p.db.Exec(query,
+		appID, signature, attackType, classification, method, pathPattern,
+		payloadTemplate, responseCode, createdBy, confidence, patternType,
+		headerPattern, bodyPattern, queryPattern,
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to store enhanced attack pattern: %w", err)
+	}
+
+	return nil
+}
+
 
 func (pp *PostgresProvider) GetAllPatterns(appID string) ([]map[string]interface{}, error) {
 	log.Printf("[DEBUG] GetAllPatterns called with appID='%s'", appID)
@@ -918,7 +955,7 @@ func (pp *PostgresProvider) StoreAttackerInteraction(appID string, patternID int
 // GetIntelCollectionTemplates returns all intelligence collection templates
 func (pp *PostgresProvider) GetIntelCollectionTemplates() ([]map[string]interface{}, error) {
 	query := `
-		SELECT id, name, description, payload_template, conditions, enabled, created_at
+		SELECT id, name, description, payload_template, conditions, is_active, created_at
 		FROM intel_collection_templates
 		ORDER BY id
 	`
@@ -933,9 +970,9 @@ func (pp *PostgresProvider) GetIntelCollectionTemplates() ([]map[string]interfac
 	for rows.Next() {
 		var id int64
 		var name, description, payloadTemplate, conditions, createdAt string
-		var enabled bool
+		var isActive bool
 
-		err := rows.Scan(&id, &name, &description, &payloadTemplate, &conditions, &enabled, &createdAt)
+		err := rows.Scan(&id, &name, &description, &payloadTemplate, &conditions, &isActive, &createdAt)
 		if err != nil {
 			continue
 		}
@@ -946,7 +983,7 @@ func (pp *PostgresProvider) GetIntelCollectionTemplates() ([]map[string]interfac
 			"description":      description,
 			"payload_template": payloadTemplate,
 			"conditions":       conditions,
-			"enabled":          enabled,
+			"is_active":         isActive,
 			"created_at":       createdAt,
 		})
 	}

@@ -16,6 +16,8 @@ type DatabaseProvider interface {
 
 	// Attack Patterns
 	StoreAttackPattern(appID, signature, attackType, classification, method, path, payloadTemplate string, responseCode int, createdBy string, confidence float64) error
+	// StoreAttackPatternEnhanced stores attack pattern with enhanced fields (pattern_type, header_pattern, etc.)
+	StoreAttackPatternEnhanced(appID, signature, attackType, classification, method, pathPattern, payloadTemplate string, responseCode int, createdBy string, confidence float64, patternType, headerPattern, bodyPattern, queryPattern string,) error
 	GetAllPatterns(appID string) ([]map[string]interface{}, error)
 	GetPatternBySignature(appID, signature string) (map[string]interface{}, error)
 	UpdatePatternTimestamp(appID, signature string) error
