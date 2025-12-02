@@ -10,6 +10,20 @@
 
 ---
 
+### Installation
+
+**macOS (Apple Silicon):**
+```bash
+curl -LO https://github.com/0tSystemsPublicRepos/IfritProxy/releases/download/v0.3.1/ifrit-v0.3.1-darwin-arm64.tar.gz
+tar -xzf ifrit-v0.3.1-darwin-arm64.tar.gz
+cd ifrit-v0.3.1-darwin-arm64
+./install.sh
+```
+
+![Installation Demo](assets/demos/quick_install_ifrit.gif)
+
+
+---
 
 ## Overview
 
