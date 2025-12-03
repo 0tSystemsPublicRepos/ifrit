@@ -19,7 +19,7 @@
 
 ### Brought to the community by
 <a href="https://www.0t.systems" target="_blank">
-  <img src="./assets/logo.png" alt="0t.systems" width="200">
+  <img src="./assets/logo.png" alt="0t.systems" width="150">
 </a>
 
 ---
@@ -110,7 +110,7 @@ graph TB
 **Simplified flow:**
 
 <div align="center">
-  <img src="assets/simpleflow.png" alt="IFRIT Simple Flow Diagram" width="900">
+  <img src="assets/simpleflow.png" alt="IFRIT Simple Flow Diagram" width="650">
 </div>
 
 </div>
@@ -414,7 +414,7 @@ flowchart TD
 ### 🎯 What Happens After Detection?
 </br>
 <div align="center">
-  <img src="assets/afterDetection.png" alt="What Happens After Detection" width="900">
+  <img src="assets/afterDetection.png" alt="What Happens After Detection" width="650">
 </div>
 
 
@@ -423,7 +423,7 @@ flowchart TD
 Every detected attack triggers **parallel intelligence gathering** in the background:
 </br>
 <div align="center">
-  <img src="assets/enrichmentpipeline.png" alt="Intelligence Enrichment Pipeline" width="900">
+  <img src="assets/enrichmentpipeline.png" alt="Intelligence Enrichment Pipeline" width="650">
 </div>
 
 
@@ -681,20 +681,29 @@ Instant block
 
 Start with **Onboarding Mode** (7 days) to auto-discover legitimate patterns, then switch to your preferred mode:
 
-```json
-{
+</td>
+</tr>
+<tr>
+<td colspan="2" align="left">
+
+<pre><code>{
   "execution_mode": {
     "mode": "onboarding",              // Auto-learn for 7 days
     "onboarding_duration_days": 7,
     "onboarding_auto_whitelist": true  // Auto-add to whitelist
   }
-}
-```
+}</code></pre>
+
+</td>
+</tr>
+<tr>
+<td colspan="2" align="center">
 
 After onboarding → Switch to **Detection Mode** or **Allowlist Mode** based on your needs
 
 </td>
 </tr>
+
 </table>
 
 **🎬 Execution Modes:**
@@ -732,10 +741,10 @@ The IFRIT dashboard provides real-time visibility into your security posture wit
 - **🌍 Geographic Insights** - Attack source locations with flags
 
 **Key Metrics Displayed:**
-**parallel intelligence gathering** in the background:
+ 
 </br>
 <div align="center">
-  <img src="assets/enrichmentpipeline.png" alt="Intelligence Enrichment Pipeline" width="900">
+  <img src="assets/tables.png" alt="Intelligence Enrichment Pipeline" width="650">
 </div>
 </br>
 
