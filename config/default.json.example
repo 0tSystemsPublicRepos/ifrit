@@ -1,27 +1,32 @@
 {
-  "server": {
+"server": {
     "listen_addr": ":8080",
     "api_listen_addr": ":8443",
-    "proxy_target": "http://localhost:80",
+    "proxy_target": "http://localhost:5001",
     "multi_app_mode": false,
     "app_id_header": "X-App-ID",
     "app_id_fallback": "default",
-    "apps": {
-      "app1": {
-        "proxy_target": "http://localhost:3000",
-        "enabled": true,
-        "description": "Main API"
-      },
-      "app2": {
-        "proxy_target": "http://localhost:4000",
-        "enabled": true,
-        "description": "Admin Panel"
-      }
+    "tls": {
+      "enabled": false,
+      "cert_file": "",
+      "key_file": ""
+    },
+    "cookie_options": {
+      "rewrite_domain": false,
+      "domain": ""
+    }
+  },
+
+  "apps": {
+    "app1": {
+      "proxy_target": "http://127.0.0.1:5001",
+      "enabled": true,
+      "description": "Main API"
     }
   },
 
   "database": {
-    "type": "sqlite",
+    "type": "postgresql",
     "sqlite": {
       "path": "./data/ifrit.db",
       "journal_mode": "WAL",
@@ -32,7 +37,7 @@
       "port": 5432,
       "database": "ifrit",
       "username": "ifrit_user",
-      "password": "ifrit_password",
+      "password": "ifrit_secure_password_here",
       "ssl_mode": "disable",
       "max_connections": 25
     }
@@ -53,12 +58,12 @@
   "llm": {
     "primary": "claude",
     "claude": {
-      "api_key": "sk-ant-API_KEY_HERE",
+      "api_key": "API_KEY_HERE",
       "model": "claude-3-5-haiku-20241022"
     },
     "gemini": {
       "api_key": "API_KEY_HERE",
-      "model": "gemini-2.5-flash"
+      "model": "gemini-3-pro-preview"
     }
   },
 
@@ -161,8 +166,8 @@
         "enabled": false,
         "smtp_host": "sandbox.smtp.mailtrap.io",
         "smtp_port": 2525,
-        "smtp_user": "USER_HERE",
-        "smtp_password": "PASSWD_HERE",
+        "smtp_user": "user",
+        "smtp_password": "passwd_here",
         "from_address": "alerts@ifrit.local",
         "to_addresses": ["security@example.com"]
       },
@@ -172,10 +177,10 @@
       },
       "twilio": {
         "enabled": false,
-        "account_sid": "SID",
-        "auth_token": "TOKEN",
-        "from_number": "+1 xxx xxx xxxx",
-        "to_numbers": ["+1 xxx xxx xxxx"]
+        "account_sid": "SID_HERE",
+        "auth_token": "TOKEN_HERE",
+        "from_number": "+1 xxxxxxxxx",
+        "to_numbers": ["+1 xxxxxxxxx"]
       },
       "webhook": {
         "enabled": false,

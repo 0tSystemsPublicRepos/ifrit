@@ -239,7 +239,7 @@ func main() {
 				return
 			}
 			defer resp.Body.Close()
-			copyResponse(w, resp)
+			copyResponse(w, resp, cfg)
 			return
 		}
 
@@ -261,7 +261,7 @@ func main() {
 		            return
 		        }
 		        defer resp.Body.Close()
-		        copyResponse(w, resp)
+			copyResponse(w, resp, cfg)
 		        return
 		    }
 	    
@@ -452,7 +452,7 @@ func main() {
 				return
 			}
 			defer resp.Body.Close()
-			copyResponse(w, resp)
+			copyResponse(w, resp, cfg)
 			return
 		}
 
@@ -540,7 +540,7 @@ func main() {
 			return
 		}
 		defer resp.Body.Close()
-		copyResponse(w, resp)
+		copyResponse(w, resp, cfg)
 	})
 
 	// Create HTTP server
@@ -653,11 +653,21 @@ func forwardRequest(r *http.Request, cfg *config.Config, appID string) (*http.Re
 }
 
 // copyResponse copies response from backend to client
-func copyResponse(w http.ResponseWriter, src *http.Response) error {
-	// Copy headers
+
+func copyResponse(w http.ResponseWriter, src *http.Response, cfg *config.Config) error {
+	// Copy headers with special handling for Set-Cookie
 	for name, values := range src.Header {
-		for _, value := range values {
-			w.Header().Add(name, value)
+		if name == "Set-Cookie" && cfg.Server.CookieOptions.RewriteDomain && cfg.Server.CookieOptions.Domain != "" {
+			// Special handling for Set-Cookie headers with domain rewriting
+			for _, cookie := range values {
+				modifiedCookie := rewriteCookieDomain(cookie, cfg.Server.CookieOptions.Domain)
+				w.Header().Add(name, modifiedCookie)
+			}
+		} else {
+			// Copy all other headers normally
+			for _, value := range values {
+				w.Header().Add(name, value)
+			}
 		}
 	}
 
@@ -667,6 +677,24 @@ func copyResponse(w http.ResponseWriter, src *http.Response) error {
 	// Copy body
 	_, err := io.Copy(w, src.Body)
 	return err
+}
+
+// rewriteCookieDomain adds Domain attribute to cookies if not present
+func rewriteCookieDomain(cookie string, domain string) string {
+	// Check if cookie already has a Domain attribute
+	if strings.Contains(cookie, "Domain=") {
+		return cookie
+	}
+
+	// Find the position after the first semicolon (after name=value)
+	parts := strings.SplitN(cookie, ";", 2)
+	if len(parts) == 2 {
+		// Insert Domain attribute after the cookie value
+		return parts[0] + "; Domain=" + domain + ";" + parts[1]
+	}
+	
+	// If no semicolon, just append Domain
+	return cookie + "; Domain=" + domain
 }
 
 // contains checks if slice contains string

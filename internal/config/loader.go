@@ -67,6 +67,7 @@ type ServerConfig struct {
 	AppIDFallback string    `json:"app_id_fallback"`
 	ProxyTarget   string    `json:"proxy_target"` // Default target for single-app mode
 	TLS           TLSConfig `json:"tls"`
+	CookieOptions CookieOptions  `json:"cookie_options"`
 }
 
 type TLSConfig struct {
@@ -74,6 +75,13 @@ type TLSConfig struct {
 	CertFile string `json:"cert_file"`
 	KeyFile  string `json:"key_file"`
 }
+
+type CookieOptions struct {
+	RewriteDomain  bool   `json:"rewrite_domain"`   // Enable domain rewriting
+	Domain         string `json:"domain"`           // Domain to add (e.g., ".example.com")
+}
+
+
 
 // === API AUTHENTICATION ===
 
